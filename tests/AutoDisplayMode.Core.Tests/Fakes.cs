@@ -63,13 +63,57 @@ namespace AutoDisplayMode.Core.Tests
         public int Writes { get; private set; }
         public string Location => @"C:\app\AutoDisplayMode.cfg";
 
+        /// <summary>最後一次建立備份時 cfg 的內容；沒有備份過為 null。</summary>
+        public string? BackupText { get; private set; }
+        public bool FailBackup { get; set; }
+
         public string? ReadText() => FailReads ? throw new System.IO.IOException("讀取失敗") : Text;
+
+        public void CreateBackup()
+        {
+            if (FailBackup) throw new System.IO.IOException("備份失敗");
+            BackupText = Text;
+        }
 
         public void WriteText(string text)
         {
             Text = text;
             Writes++;
         }
+    }
+
+    sealed class FakeMonitors : IMonitorSystem
+    {
+        public FakeMonitors(params DetectedMonitor[] monitors) => Monitors = new List<DetectedMonitor>(monitors);
+
+        public List<DetectedMonitor> Monitors { get; set; }
+        public bool Fail { get; set; }
+
+        public IReadOnlyList<DetectedMonitor> Detect() =>
+            Fail ? throw new InvalidOperationException("偵測失敗") : Monitors.ToArray();
+    }
+
+    /// <summary>建立假螢幕的捷徑。</summary>
+    static class Mon
+    {
+        public static DetectedMonitor On(string serial, int x, int y, int w, int h, int hz,
+            Orientation orientation = Orientation.Landscape, bool primary = false,
+            string manufacturer = "DEL", string product = "A0F4", string connector = "DP1", string name = "DELL U2720Q") =>
+            new()
+            {
+                Manufacturer = manufacturer, ProductCode = product, Serial = serial, Connector = connector, Name = name,
+                IsActive = true, X = x, Y = y, Current = new VideoMode(w, h, hz), Orientation = orientation, IsPrimary = primary,
+                Native = new VideoMode(w, h, hz), SupportedModes = new[] { new VideoMode(w, h, hz) },
+            };
+
+        public static DetectedMonitor Off(string serial, VideoMode? native,
+            string manufacturer = "GSM", string product = "5B7F", string connector = "HDMI1", string name = "LG ULTRAGEAR") =>
+            new()
+            {
+                Manufacturer = manufacturer, ProductCode = product, Serial = serial, Connector = connector, Name = name,
+                IsActive = false, Native = native,
+                SupportedModes = native == null ? Array.Empty<VideoMode>() : new[] { native },
+            };
     }
 
     sealed class FakeStartup : IStartupRegistration
@@ -99,13 +143,19 @@ namespace AutoDisplayMode.Core.Tests
         public FakeStore Store { get; }
         public FakeStartup Startup { get; } = new();
         public FakeNotifier Notifier { get; } = new();
+        public FakeMonitors Monitors { get; }
         public AppCoordinator App { get; }
 
-        public Harness(string? cfg = null, bool start = true)
+        /// <summary>預設接上一台開啟中的主螢幕。</summary>
+        public static DetectedMonitor DefaultMonitor => Mon.On("SN0001", 0, 0, 1920, 1080, 60, primary: true);
+
+        public Harness(string? cfg = null, bool start = true, DetectedMonitor[]? monitors = null, bool startupEnabled = false)
         {
             Signals = new FakeSignals(Clock);
             Store = new FakeStore(cfg);
-            App = new AppCoordinator(Store, Switcher, Signals, Clock, Startup, Notifier);
+            Monitors = new FakeMonitors(monitors ?? new[] { DefaultMonitor });
+            Startup.IsEnabled = startupEnabled;
+            App = new AppCoordinator(Store, Switcher, Monitors, Signals, Clock, Startup, Notifier);
             if (start) App.Start();
         }
 

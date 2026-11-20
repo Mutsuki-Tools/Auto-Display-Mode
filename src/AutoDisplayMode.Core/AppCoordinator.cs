@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 
 namespace AutoDisplayMode.Core
 {
@@ -20,9 +22,12 @@ namespace AutoDisplayMode.Core
         const long NotReadyPauseMs = 60_000;
         /// <summary>手動開關自動切換後的緩衝期。</summary>
         const long ToggleGraceMs = 3_000;
+        /// <summary>首次啟動時以目前螢幕狀態建立的模式名稱。</summary>
+        const string DefaultModeName = "預設";
 
         readonly IConfigStore store;
         readonly IDisplaySwitcher switcher;
+        readonly IMonitorSystem monitors;
         readonly IUsageSignals signals;
         readonly IClock clock;
         readonly IStartupRegistration startup;
@@ -33,12 +38,15 @@ namespace AutoDisplayMode.Core
         long ignoreUntilMs;   // 在這個時間之前不做自動切換（切換螢幕後的緩衝）
         int audioStreak;      // 連續偵測到聲音的秒數
         uint lastInputTick;   // 遊玩模式用：Windows 最後輸入時間
+        bool writesBlocked;   // cfg 讀取或舊版備份失敗：不寫入 cfg，避免覆蓋原本的內容
+        string loadNote = ""; // 載入 cfg 時發生的事（轉移、備份失敗等），附加在下一則通知中
 
-        public AppCoordinator(IConfigStore store, IDisplaySwitcher switcher, IUsageSignals signals,
+        public AppCoordinator(IConfigStore store, IDisplaySwitcher switcher, IMonitorSystem monitors, IUsageSignals signals,
             IClock clock, IStartupRegistration startup, INotifier notifier)
         {
             this.store = store;
             this.switcher = switcher;
+            this.monitors = monitors;
             this.signals = signals;
             this.clock = clock;
             this.startup = startup;
@@ -83,7 +91,7 @@ namespace AutoDisplayMode.Core
             lastUsageMs = now;
             ignoreUntilMs = now + StartupGraceMs;
             lastInputTick = signals.LastInputTick;
-            notifier.Notify("省電螢幕工具已啟動。\n" + StatusSummary, NotificationKind.Info);
+            notifier.Notify("省電螢幕工具已啟動。\n" + TakeLoadNote() + StatusSummary, NotificationKind.Info);
         }
 
         /// <summary>每秒呼叫一次。</summary>
@@ -154,7 +162,7 @@ namespace AutoDisplayMode.Core
 
             CurrentMode = target;
             config.LastMode = target;
-            SaveKeys("LastMode");
+            Save();
 
             IsSwitching = true;
             signals.ResetMouseTracking();
@@ -193,7 +201,7 @@ namespace AutoDisplayMode.Core
                 return;
             }
             config.AutoSwitch = autoSwitch;
-            SaveKeys("AutoMode");
+            Save();
             SwitchTo(target, null);
             OnChanged();
         }
@@ -202,7 +210,7 @@ namespace AutoDisplayMode.Core
         {
             long now = clock.NowMs;
             config.AutoSwitch = on;
-            SaveKeys("AutoMode");
+            Save();
             ignoreUntilMs = Math.Max(ignoreUntilMs, now + ToggleGraceMs);
             ResetUsageTracking(now);
             ApplyHookPolicy();
@@ -212,14 +220,14 @@ namespace AutoDisplayMode.Core
         public void SetIdleMinutes(int minutes)
         {
             config.IdleMinutes = minutes;
-            SaveKeys("IdleMinutes");
+            Save();
             OnChanged();
         }
 
         public void SetAudioDetect(bool on)
         {
             config.AudioDetect = on;
-            SaveKeys("AudioDetect");
+            Save();
             audioStreak = 0;
             OnChanged();
         }
@@ -246,6 +254,47 @@ namespace AutoDisplayMode.Core
             {
                 notifier.Notify("無法修改開機啟動設定：" + ex.Message, NotificationKind.Error);
             }
+            config.StartWithWindows = startup.IsEnabled;
+            Save();
+            OnChanged();
+        }
+
+        // ------------------------------------------------------------
+        //  擷取
+        // ------------------------------------------------------------
+
+        /// <summary>目前模式的名稱。</summary>
+        public string CurrentModeName => config.CurrentModeConfig?.Name ?? "";
+
+        /// <summary>把目前實際的螢幕狀態擷取進目前模式並存檔（確認視窗由介面層負責）。</summary>
+        public void CaptureToCurrentMode()
+        {
+            if (IsSwitching)
+            {
+                notifier.Notify("正在切換中，請稍候。", NotificationKind.Info);
+                return;
+            }
+
+            IReadOnlyList<DetectedMonitor> detected;
+            try
+            {
+                detected = monitors.Detect();
+            }
+            catch (Exception ex)
+            {
+                notifier.Notify("無法偵測螢幕：" + ex.Message, NotificationKind.Error);
+                return;
+            }
+
+            ModeConfig mode = config.CurrentModeConfig ?? AddDefaultMode(config, Array.Empty<DetectedMonitor>());
+            List<MonitorSettings> captured = Capture.Run(detected, mode.Monitors);
+            mode.Monitors.Clear();
+            mode.Monitors.AddRange(captured);
+            config.CurrentModeId = mode.Id;
+            ResetUsageTracking(clock.NowMs);
+
+            if (Save()) notifier.Notify("已將目前螢幕狀態存入「" + mode.Name + "」。", NotificationKind.Info);
+            else notifier.Notify("無法寫入設定檔：\n" + store.Location, NotificationKind.Error);
             OnChanged();
         }
 
@@ -264,7 +313,7 @@ namespace AutoDisplayMode.Core
             ApplyHookPolicy();
             OnChanged();
 
-            string msg = "已重新載入設定檔。\n" + StatusSummary;
+            string msg = "已重新載入設定檔。\n" + TakeLoadNote() + StatusSummary;
             if (switcher.IsReady(config))
             {
                 notifier.Notify(msg, NotificationKind.Info);
@@ -278,19 +327,95 @@ namespace AutoDisplayMode.Core
         /// <summary>使用者要以文字編輯器開啟 cfg 前呼叫：cfg 不存在就先以目前設定建立。</summary>
         public void EnsureConfigFileExists()
         {
-            if (TryRead(out string? text) && text == null) SaveAll(config);
+            if (TryRead(out string? text) && text == null) Save();
         }
 
+        /// <summary>
+        /// 讀取 cfg：
+        /// 不存在（或空白）時以目前螢幕狀態建立「預設」模式並寫出；
+        /// 舊格式時先備份為 .bak、轉移仍有意義的值、建立「預設」模式並寫出；
+        /// 讀取失敗時使用預設值，且在下次成功讀取前不寫入 cfg（避免覆蓋讀不到的內容）。
+        /// </summary>
         AppConfig LoadConfig()
         {
-            if (!TryRead(out string? text)) return new AppConfig();   // 讀取失敗就用預設值
-            if (text == null)
+            writesBlocked = false;
+            AppConfig c;
+
+            if (!TryRead(out string? text))
             {
-                var defaults = new AppConfig();
-                SaveAll(defaults);
-                return defaults;
+                writesBlocked = true;
+                c = new AppConfig();
+                AddDefaultMode(c, DetectForNewMode());
+                return c;
             }
-            return ConfigFile.Parse(text);
+
+            if (text == null || text.Trim().Length == 0)
+            {
+                c = new AppConfig { StartWithWindows = startup.IsEnabled };
+                AddDefaultMode(c, DetectForNewMode());
+                Save(c);
+                return c;
+            }
+
+            if (ConfigFile.IsLegacy(text))
+            {
+                try
+                {
+                    store.CreateBackup();
+                    loadNote += "已將舊版設定檔轉換為新格式，原檔備份為 .bak。\n";
+                }
+                catch (Exception ex)
+                {
+                    // 沒有備份就不覆蓋舊檔：本次以轉移後的設定執行，但不寫入 cfg
+                    writesBlocked = true;
+                    loadNote += "無法備份舊版設定檔（" + ex.Message + "），本次不會改寫設定檔。\n";
+                }
+                c = ConfigFile.MigrateLegacy(text);
+                c.StartWithWindows = startup.IsEnabled;   // 舊版的開機啟動狀態只存在登錄檔
+                AddDefaultMode(c, DetectForNewMode());
+                Save(c);
+                return c;
+            }
+
+            c = ConfigFile.Parse(text);
+            if (c.Modes.Count == 0)
+            {
+                AddDefaultMode(c, DetectForNewMode());
+                Save(c);
+            }
+            return c;
+        }
+
+        IReadOnlyList<DetectedMonitor> DetectForNewMode()
+        {
+            try
+            {
+                return monitors.Detect();
+            }
+            catch (Exception ex)
+            {
+                loadNote += "無法偵測螢幕（" + ex.Message + "），「" + DefaultModeName + "」模式中沒有螢幕設定。\n";
+                return Array.Empty<DetectedMonitor>();
+            }
+        }
+
+        /// <summary>以 <paramref name="detected"/> 擷取出「預設」模式，加入設定並設為目前模式。</summary>
+        static ModeConfig AddDefaultMode(AppConfig c, IReadOnlyList<DetectedMonitor> detected)
+        {
+            int id = c.Modes.Count == 0 ? 1 : c.Modes.Max(m => m.Id) + 1;
+            var mode = new ModeConfig(id, DefaultModeName);
+            mode.Monitors.AddRange(Capture.Run(detected, Array.Empty<MonitorSettings>()));
+            c.Modes.Add(mode);
+            c.CurrentModeId = id;
+            return mode;
+        }
+
+        /// <summary>取出並清除載入 cfg 時留下的說明（附加在下一則啟動或重新載入的通知中）。</summary>
+        string TakeLoadNote()
+        {
+            string note = loadNote;
+            loadNote = "";
+            return note;
         }
 
         bool TryRead(out string? text)
@@ -307,25 +432,21 @@ namespace AutoDisplayMode.Core
             }
         }
 
-        void SaveAll(AppConfig c) => TryWrite(ConfigFile.Format(c));
+        /// <summary>整份重寫 cfg。成功時回傳 true。</summary>
+        bool Save() => Save(config);
 
-        // 只更新指定的項目，cfg 其他內容保持不變
-        void SaveKeys(params string[] keys)
+        bool Save(AppConfig c)
         {
-            if (!TryRead(out string? text)) return;
-            if (text == null) SaveAll(config);
-            else TryWrite(ConfigFile.UpdateKeys(text, config, keys));
-        }
-
-        void TryWrite(string text)
-        {
+            if (writesBlocked) return false;
             try
             {
-                store.WriteText(text);
+                store.WriteText(ConfigFile.Format(c));
+                return true;
             }
             catch
             {
-                // 資料夾沒有寫入權限等情況，忽略
+                // 資料夾沒有寫入權限等情況
+                return false;
             }
         }
 

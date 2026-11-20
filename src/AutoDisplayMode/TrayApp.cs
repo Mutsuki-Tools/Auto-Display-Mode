@@ -27,6 +27,7 @@ namespace AutoDisplayMode
         readonly ToolStripMenuItem miIdle;
         readonly ToolStripMenuItem miAudio;
         readonly ToolStripMenuItem miStartup;
+        readonly ToolStripMenuItem miCapture;
         readonly List<ToolStripMenuItem> idleItems = new();
         readonly Icon iconHomeAuto, iconHomeManual, iconAwayAuto, iconAwayManual;
         readonly System.Windows.Forms.Timer timer;
@@ -53,7 +54,7 @@ namespace AutoDisplayMode
             string dir = Path.GetDirectoryName(Application.ExecutablePath)!;
             app = new AppCoordinator(
                 new FileConfigStore(Path.Combine(dir, "AutoDisplayMode.cfg")),
-                switcher, signals, clock, new RegistryStartup(), new BalloonNotifier(tray, AppTitle));
+                switcher, new WindowsMonitorSystem(), signals, clock, new RegistryStartup(), new BalloonNotifier(tray, AppTitle));
             switcher.Finished += app.OnSwitchFinished;
 
             // ---- 右鍵選單 ----
@@ -83,6 +84,8 @@ namespace AutoDisplayMode
 
             miAudio = new ToolStripMenuItem("", null, delegate { app.SetAudioDetect(!app.Config.AudioDetect); });
 
+            miCapture = new ToolStripMenuItem("", null, delegate { ConfirmCapture(); });
+
             var miHelp = new ToolStripMenuItem("說明", null, delegate { ShowHelp(); });
             var miOpenCfg = new ToolStripMenuItem("以文字文件開啟cfg檔", null, delegate { OpenConfig(); });
             var miReload = new ToolStripMenuItem("重新載入cfg檔", null, delegate { app.ReloadConfig(); });
@@ -100,6 +103,8 @@ namespace AutoDisplayMode
                 miAuto,
                 miIdle,
                 miAudio,
+                new ToolStripSeparator(),
+                miCapture,
                 new ToolStripSeparator(),
                 miHelp,
                 miOpenCfg,
@@ -145,6 +150,19 @@ namespace AutoDisplayMode
         }
 
         // ------------------------------------------------------------
+        //  擷取
+        // ------------------------------------------------------------
+        void ConfirmCapture()
+        {
+            string name = app.CurrentModeName;
+            DialogResult r = MessageBox.Show(
+                "要把目前的螢幕狀態（每台螢幕的開關、座標、解析度、更新率、方向與主螢幕）存入「" + name + "」嗎？\n\n" +
+                "「" + name + "」原本記錄的螢幕設定會被覆蓋；目前沒接上的螢幕維持原本的設定。",
+                AppTitle, MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button2);
+            if (r == DialogResult.Yes) app.CaptureToCurrentMode();
+        }
+
+        // ------------------------------------------------------------
         //  介面
         // ------------------------------------------------------------
         void UpdateUi()
@@ -160,6 +178,8 @@ namespace AutoDisplayMode
                 item.Checked = (int)item.Tag == cfg.IdleMinutes;
             miAudio.Text = "自動模式偵測聲音 [目前：" + OnOff(cfg.AudioDetect) + "]";
             miStartup.Text = "開機時自動開啟此程式 [目前：" + OnOff(app.StartupEnabled) + "]";
+            miCapture.Text = "將目前螢幕狀態存入「" + app.CurrentModeName + "」…";
+            miCapture.Enabled = !app.IsSwitching;
 
             if (home) tray.Icon = cfg.AutoSwitch ? iconHomeAuto : iconHomeManual;
             else tray.Icon = cfg.AutoSwitch ? iconAwayAuto : iconAwayManual;
@@ -194,6 +214,9 @@ namespace AutoDisplayMode
                 "  選擇「切換成遊玩模式」會重新開啟自動模式。\n" +
                 "・「切換成省電模式並開啟自動模式」適合遠端時使用：遠端操作不會觸發切換，\n" +
                 "  回家動到實體滑鼠就會自動切回遊玩模式。\n\n" +
+                "【擷取】\n" +
+                "・選單「將目前螢幕狀態存入「" + app.CurrentModeName + "」…」會把目前每台螢幕的狀態存進目前模式（cfg檔）。\n" +
+                "・此版本切換螢幕仍透過 bat，存入的螢幕設定會在之後的版本用來切換。\n\n" +
                 "【圖示】\n" +
                 "・橘色：遊玩模式　綠色：省電模式\n" +
                 "・實心：自動模式開啟　空心：自動模式關閉\n\n" +

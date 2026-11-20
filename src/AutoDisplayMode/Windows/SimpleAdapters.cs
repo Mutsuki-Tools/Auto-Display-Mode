@@ -25,6 +25,8 @@ namespace AutoDisplayMode.Windows
         public string? ReadText() => File.Exists(Location) ? File.ReadAllText(Location, Encoding.UTF8) : null;
 
         public void WriteText(string text) => File.WriteAllText(Location, text, new UTF8Encoding(true));
+
+        public void CreateBackup() => File.Copy(Location, Location + ".bak", overwrite: true);
     }
 
     /// <summary>開機啟動：目前使用者登錄檔的 Run 機碼（不需系統管理員權限）。</summary>

@@ -1,6 +1,8 @@
 // 核心對外的介面（ports）：由 Windows 轉接層實作，測試以假物件實作。
 // 核心只透過這些介面與外界互動，本身不引用任何 Windows API、WinForms 或登錄檔。
 
+using System.Collections.Generic;
+
 namespace AutoDisplayMode.Core
 {
     /// <summary>時鐘：單調遞增的毫秒時間。</summary>
@@ -20,6 +22,13 @@ namespace AutoDisplayMode.Core
 
         /// <summary>開始在背景切換到 <paramref name="target"/>。</summary>
         void Begin(Mode target, AppConfig config);
+    }
+
+    /// <summary>螢幕系統：偵測目前接上的螢幕。（套用螢幕狀態在之後的版本加入，此階段切換仍透過 <see cref="IDisplaySwitcher"/>。）</summary>
+    public interface IMonitorSystem
+    {
+        /// <summary>列出目前接上的每台螢幕（包含接上但關閉的）。偵測失敗時丟出例外。</summary>
+        IReadOnlyList<DetectedMonitor> Detect();
     }
 
     /// <summary>
@@ -68,6 +77,9 @@ namespace AutoDisplayMode.Core
 
         /// <summary>寫入 cfg 全文（UTF-8 含 BOM）。寫入失敗時丟出例外。</summary>
         void WriteText(string text);
+
+        /// <summary>把目前的 cfg 檔原封不動複製為 <c>.bak</c>（覆蓋舊的備份）。失敗時丟出例外。</summary>
+        void CreateBackup();
     }
 
     /// <summary>開機啟動：目前使用者登入時是否自動開啟本程式。</summary>

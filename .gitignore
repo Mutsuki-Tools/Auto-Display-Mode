@@ -7,3 +7,6 @@ obj/
 TestResults/
 .vs/
 *.user
+
+# 舊版 cfg 轉換時產生的備份（原檔已在 git 歷史中）
+*.cfg.bak

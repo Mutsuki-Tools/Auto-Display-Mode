@@ -437,8 +437,11 @@ namespace AutoDisplayMode.Core
             else
             {
                 c = ConfigFile.Parse(text);
-                save = c.Modes.Count == 0;
-                if (save) AddDefaultMode(c, DetectForNewMode());
+                // 新格式且有模式時啟動不改寫；但有過時的鍵時立即改寫，避免手動編輯時看到舊鍵、轉移結果只存在記憶體中
+                bool noModes = c.Modes.Count == 0;
+                save = noModes || c.HasObsoleteKeys;
+                if (noModes) AddDefaultMode(c, DetectForNewMode());
+                else if (c.HasObsoleteKeys) loadNote += "已將設定檔更新為新版格式（移除 bat 設定，LastMode 改為 HomeMode／AwayMode）。\n";
             }
 
             ConfigFile.ResolveLegacyRoles(c);

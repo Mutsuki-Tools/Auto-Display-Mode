@@ -125,7 +125,15 @@ namespace AutoDisplayMode.Core
             {
                 case "idleminutes": c.IdleMinutes = ParseInt(val, c.IdleMinutes); break;
                 case "audiodetect": c.AudioDetect = ParseBool(val, c.AudioDetect); break;
-                case "lastmode": c.LegacyLastMode = AppConfig.ParseMode(val); break;
+                case "lastmode":
+                    c.LegacyLastMode = AppConfig.ParseMode(val);
+                    c.HasObsoleteKeys = true;
+                    break;
+                case "batpath":
+                case "homeargs":
+                case "awayargs":
+                    c.HasObsoleteKeys = true;   // bat 已不再使用：值捨棄
+                    break;
                 case "homemode":
                     c.HomeModeId = ParseInt(val, 0);
                     c.LegacyRolesSpecified = true;

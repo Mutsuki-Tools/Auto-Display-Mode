@@ -36,7 +36,7 @@
 
 #### 手動實測步驟
 
-1. 執行 `build.bat` 後啟動新的 exe。cfg 會被改寫：`[LegacySwitch]` 只剩 `HomeMode=1`、`AwayMode=0`、`IdleMinutes`、`AudioDetect`，`[Mode.1]` 多出 `Color`、`ManualAutoSwitch`、`UnlistedMonitors`。
+1. 先從工作列關閉正在執行的舊版程式，再執行 `build.bat`（舊版還開著時 exe 無法覆蓋），然後啟動新的 exe。啟動通知應包含「已將設定檔更新為新版格式」，cfg 也會在啟動時立即改寫：`[LegacySwitch]` 只剩 `HomeMode=1`、`AwayMode=0`、`IdleMinutes`、`AudioDetect`，`[Mode.1]` 多出 `Color`、`ManualAutoSwitch`、`UnlistedMonitors`。
 2. 從右鍵選單「以文字文件開啟cfg檔」，在檔尾加上：
    ```
    [Mode.2]
@@ -50,3 +50,9 @@
 7. 手動切換的自動切換設定：在 cfg 把「省電」加上 `ManualAutoSwitch=Off`、重新載入，手動切到「省電」後自動切換應變成關（空心圖示）。
 8. 拔掉一台螢幕（例如 Wacom）後在兩個模式間切換：其餘螢幕照常套用，不會出錯。
 9. 直向螢幕：在 Windows 設定把某台螢幕設為「直向」後擷取存入某模式，確認 cfg 中該螢幕的 `Orientation` 為 `Portrait`；切到別的模式再切回來，方向應正確還原。
+
+### 2026-11-21 修正：有過時的鍵時啟動就改寫 cfg
+
+- 手動實測發現：cfg 已是新格式且有模式時，啟動不改寫 cfg（票 02 的行為），因此 `LastMode` → `HomeMode`／`AwayMode` 的轉移與移除 bat 相關鍵只存在記憶體中，要等下次存檔才寫出。若使用者此時手動在 cfg 只加上 `AwayMode=2`，程式會認定 cfg 已指定角色而不再用 `LastMode` 轉移，`HomeMode` 變成 0。
+- 改為：讀到 `BatPath`、`HomeArgs`、`AwayArgs`、`LastMode` 任一個時，啟動（或重新載入）當下就改寫 cfg，並在通知中說明「已將設定檔更新為新版格式」。沒有過時鍵的新格式 cfg 仍維持啟動不改寫。
+- 手動實測步驟 1 已更正。

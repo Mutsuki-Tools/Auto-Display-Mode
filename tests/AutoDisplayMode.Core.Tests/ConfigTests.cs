@@ -277,7 +277,7 @@ namespace AutoDisplayMode.Core.Tests
         }
 
         [Fact]
-        public void 票02格式的cfg以LastMode轉移成舊版切換條件指向的模式並移除bat相關的鍵()
+        public void 票02格式的cfg啟動時就以LastMode轉移成舊版切換條件指向的模式並移除bat相關的鍵()
         {
             var h = new Harness(Harness.Cfg(
                 "[General]", "CurrentMode=4",
@@ -285,11 +285,23 @@ namespace AutoDisplayMode.Core.Tests
                 "[Mode.4]", "Name=預設"));
 
             Assert.Equal((4, 0), (h.App.Config.HomeModeId, h.App.Config.AwayModeId));
-            h.App.SetAutoSwitch(true);   // 觸發整份重寫
+            Assert.Equal(1, h.Store.Writes);   // 啟動時就改寫，不必等下次存檔
             Assert.Contains("HomeMode=4\r\nAwayMode=0\r\n", h.Store.Text);
             Assert.Contains("IdleMinutes=7\r\n", h.Store.Text);
             Assert.DoesNotContain("BatPath", h.Store.Text);
             Assert.DoesNotContain("LastMode", h.Store.Text);
+            Assert.Contains("已將設定檔更新為新版格式", Assert.Single(h.Notifier.Shown).Text);
+        }
+
+        [Fact]
+        public void 只有bat相關的過時鍵時啟動也會改寫()
+        {
+            var h = new Harness(Harness.Cfg(
+                "[LegacySwitch]", "HomeMode=1", "AwayMode=2", "BatPath=C:\\m.bat", "[Mode.1]", "Name=甲", "[Mode.2]", "Name=乙"));
+
+            Assert.Equal(1, h.Store.Writes);
+            Assert.DoesNotContain("BatPath", h.Store.Text);
+            Assert.Equal((1, 2), (h.App.Config.HomeModeId, h.App.Config.AwayModeId));
         }
 
         [Fact]

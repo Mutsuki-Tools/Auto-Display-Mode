@@ -70,6 +70,9 @@ namespace AutoDisplayMode.Core
         /// <summary>讀取時 cfg 中的舊鍵 LastMode（遊玩/省電）；只用來轉移成 HomeMode／AwayMode，不再寫出。</summary>
         internal Mode? LegacyLastMode { get; set; }
 
+        /// <summary>讀取時 cfg 中有已不再使用的鍵（BatPath、HomeArgs、AwayArgs、LastMode）：應立即改寫 cfg。</summary>
+        internal bool HasObsoleteKeys { get; set; }
+
         internal static Mode ParseMode(string s) =>
             string.Equals(s.Trim(), "away", StringComparison.OrdinalIgnoreCase) ? Mode.Away : Mode.Home;
     }

@@ -1,27 +1,49 @@
 @echo off
 setlocal
 
-rem Build AutoDisplayMode.exe with the C# compiler built into Windows (.NET Framework 4.x)
+rem Build AutoDisplayMode.exe with the .NET SDK and run the tests.
+rem The exe targets .NET Framework 4.8 (built into Windows 10/11), so no extra runtime is needed to run it.
 
-set "CSC=%WINDIR%\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
-if not exist "%CSC%" set "CSC=%WINDIR%\Microsoft.NET\Framework\v4.0.30319\csc.exe"
-if not exist "%CSC%" goto NOCSC
+where dotnet >nul 2>nul
+if errorlevel 1 goto NODOTNET
 
-"%CSC%" /nologo /target:winexe /codepage:65001 /optimize+ /out:"%~dp0AutoDisplayMode.exe" /reference:System.Windows.Forms.dll /reference:System.Drawing.dll "%~dp0AutoDisplayMode.cs"
+set "SLN=%~dp0AutoDisplayMode.sln"
+set "OUT=%~dp0src\AutoDisplayMode\bin\Release\net48\AutoDisplayMode.exe"
+
+dotnet build "%SLN%" -c Release --nologo
 if errorlevel 1 goto FAIL
+
+dotnet test "%SLN%" -c Release --nologo --no-build
+if errorlevel 1 goto TESTFAIL
+
+copy /y "%OUT%" "%~dp0AutoDisplayMode.exe" >nul
+if errorlevel 1 goto COPYFAIL
 
 echo.
 echo Build OK: %~dp0AutoDisplayMode.exe
-pause
+if "%~1"=="" pause
 exit /b 0
 
-:NOCSC
-echo csc.exe not found. .NET Framework 4.x is required.
-pause
+:NODOTNET
+echo dotnet not found. Install the .NET SDK: https://dotnet.microsoft.com/download
+if "%~1"=="" pause
 exit /b 1
 
 :FAIL
 echo.
 echo Build FAILED. See the errors above.
-pause
+if "%~1"=="" pause
+exit /b 1
+
+:TESTFAIL
+echo.
+echo Tests FAILED. See the errors above.
+if "%~1"=="" pause
+exit /b 1
+
+:COPYFAIL
+echo.
+echo Could not copy the exe to %~dp0AutoDisplayMode.exe
+echo If the tool is running, close it from the tray menu and build again.
+if "%~1"=="" pause
 exit /b 1

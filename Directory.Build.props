@@ -1,0 +1,11 @@
+<Project>
+  <!-- ADR-0001：以 .NET SDK 建置，目標 .NET Framework 4.8，使用最新 C# 語法 -->
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <Deterministic>true</Deterministic>
+  </PropertyGroup>
+</Project>

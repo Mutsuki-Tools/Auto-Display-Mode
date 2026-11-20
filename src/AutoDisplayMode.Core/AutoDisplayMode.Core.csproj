@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    核心：不引用任何 Windows API、WinForms 或登錄檔。
+    只透過 Ports.cs 中的介面與 Windows 轉接層互動，所有自動化測試都經由 AppCoordinator。
+  -->
+  <PropertyGroup>
+    <RootNamespace>AutoDisplayMode.Core</RootNamespace>
+  </PropertyGroup>
+</Project>

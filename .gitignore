@@ -1,2 +1,9 @@
-# 編譯產物（由 build.bat 從 AutoDisplayMode.cs 產生）
+# 編譯產物（由 build.bat 建置後複製到這裡）
 AutoDisplayMode.exe
+
+# dotnet build / dotnet test 的輸出
+bin/
+obj/
+TestResults/
+.vs/
+*.user

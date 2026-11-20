@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- 介面層（WinForms）與 Windows 轉接層 -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <UseWindowsForms>true</UseWindowsForms>
+    <RootNamespace>AutoDisplayMode</RootNamespace>
+    <AssemblyName>AutoDisplayMode</AssemblyName>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+  </PropertyGroup>
+
+  <!--
+    核心的原始碼直接編進 exe，讓產出維持單一 exe（不另附 dll）。
+    核心本身仍是獨立專案，確保它不會引用 WinForms，測試也以它為對象。
+  -->
+  <ItemGroup>
+    <Compile Include="..\AutoDisplayMode.Core\**\*.cs" Exclude="..\AutoDisplayMode.Core\obj\**;..\AutoDisplayMode.Core\bin\**" Link="Core\%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
+</Project>

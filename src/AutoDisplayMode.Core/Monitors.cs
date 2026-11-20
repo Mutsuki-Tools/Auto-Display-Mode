@@ -158,9 +158,48 @@ namespace AutoDisplayMode.Core
         public bool Primary { get; init; }
     }
 
+    /// <summary>套用模式時，接上但模式中沒有記錄的螢幕要怎麼處理。</summary>
+    public enum UnlistedMonitors
+    {
+        /// <summary>維持現狀（預設）。</summary>
+        Keep,
+
+        /// <summary>關閉。</summary>
+        Off,
+    }
+
+    /// <summary>手動切換進入模式時，自動切換要怎麼處理。</summary>
+    public enum ManualAutoSwitch
+    {
+        /// <summary>維持（預設）。</summary>
+        Keep,
+
+        /// <summary>開啟。</summary>
+        On,
+
+        /// <summary>關閉。</summary>
+        Off,
+    }
+
     /// <summary>模式：一組有名稱的螢幕設定。以內部 ID 識別，名稱可改。</summary>
     public sealed class ModeConfig
     {
+        /// <summary><see cref="Color"/> 尚未指定。</summary>
+        public const int NoColor = -1;
+
+        /// <summary>新模式依序選用的工作列圖示顏色（0xRRGGBB）：選第一個沒被其他模式使用的。</summary>
+        public static readonly IReadOnlyList<int> Palette = new[]
+        {
+            0xEB8232, // 橘
+            0x3CAA5A, // 綠
+            0x3C82DC, // 藍
+            0xD24B4B, // 紅
+            0x9B5AD2, // 紫
+            0xD2B432, // 黃
+            0x32B4B4, // 青
+            0x8C8C8C, // 灰
+        };
+
         public ModeConfig(int id, string name)
         {
             Id = id;
@@ -171,7 +210,34 @@ namespace AutoDisplayMode.Core
 
         public string Name { get; set; }
 
+        /// <summary>工作列圖示顏色（0xRRGGBB）；<see cref="NoColor"/> 表示尚未指定。</summary>
+        public int Color { get; set; } = NoColor;
+
+        /// <summary>手動切換進入此模式時，自動切換要維持、開啟或關閉。</summary>
+        public ManualAutoSwitch ManualAutoSwitch { get; set; }
+
+        /// <summary>套用此模式時，接上但沒記錄的螢幕要維持現狀或關閉。</summary>
+        public UnlistedMonitors UnlistedMonitors { get; set; }
+
         /// <summary>每台螢幕的螢幕設定（依 cfg 中的順序）。</summary>
         public List<MonitorSettings> Monitors { get; } = new();
+
+        /// <summary>為尚未指定顏色的模式依序配上沒被其他模式使用的顏色（全部用過就從頭循環）。</summary>
+        public static void AssignMissingColors(IReadOnlyList<ModeConfig> modes)
+        {
+            var used = new HashSet<int>();
+            foreach (ModeConfig m in modes)
+                if (m.Color != NoColor) used.Add(m.Color);
+            int next = 0;
+            foreach (ModeConfig m in modes)
+            {
+                if (m.Color != NoColor) continue;
+                int? free = null;
+                foreach (int c in Palette)
+                    if (!used.Contains(c)) { free = c; break; }
+                m.Color = free ?? Palette[next++ % Palette.Count];
+                used.Add(m.Color);
+            }
+        }
     }
 }

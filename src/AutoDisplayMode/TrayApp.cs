@@ -23,13 +23,15 @@ namespace AutoDisplayMode
         readonly NotifyIcon tray;
         readonly ContextMenuStrip menu;
         readonly ToolStripMenuItem miStatus;
+        readonly ToolStripSeparator modesEnd;
+        readonly List<ToolStripMenuItem> modeItems = new();
         readonly ToolStripMenuItem miAuto;
         readonly ToolStripMenuItem miIdle;
         readonly ToolStripMenuItem miAudio;
         readonly ToolStripMenuItem miStartup;
         readonly ToolStripMenuItem miCapture;
         readonly List<ToolStripMenuItem> idleItems = new();
-        readonly Icon iconHomeAuto, iconHomeManual, iconAwayAuto, iconAwayManual;
+        readonly Dictionary<(int Color, bool Filled), Icon> icons = new();
         readonly System.Windows.Forms.Timer timer;
 
         public TrayApp()
@@ -38,36 +40,23 @@ namespace AutoDisplayMode
                 SynchronizationContext.SetSynchronizationContext(new WindowsFormsSynchronizationContext());
             SynchronizationContext ui = SynchronizationContext.Current!;
 
-            Color homeColor = Color.FromArgb(235, 130, 50);
-            Color awayColor = Color.FromArgb(60, 170, 90);
-            iconHomeAuto = MakeIcon(homeColor, true);
-            iconHomeManual = MakeIcon(homeColor, false);
-            iconAwayAuto = MakeIcon(awayColor, true);
-            iconAwayManual = MakeIcon(awayColor, false);
-
             tray = new NotifyIcon();
 
             // ---- 核心與 Windows 轉接層 ----
             var clock = new StopwatchClock();
             signals = new WindowsUsageSignals(clock);
-            var switcher = new BatDisplaySwitcher(ui);
+            var monitors = new WindowsMonitorSystem(ui);
             string dir = Path.GetDirectoryName(Application.ExecutablePath)!;
             app = new AppCoordinator(
                 new FileConfigStore(Path.Combine(dir, "AutoDisplayMode.cfg")),
-                switcher, new WindowsMonitorSystem(), signals, clock, new RegistryStartup(), new BalloonNotifier(tray, AppTitle));
-            switcher.Finished += app.OnSwitchFinished;
+                monitors, signals, clock, new RegistryStartup(), new BalloonNotifier(tray, AppTitle));
+            monitors.ApplyFinished += app.OnSwitchFinished;
 
             // ---- 右鍵選單 ----
             menu = new ContextMenuStrip();
 
             miStatus = new ToolStripMenuItem("") { Enabled = false };
-
-            var miHome = new ToolStripMenuItem("切換成遊玩模式（將開啟自動模式）", null,
-                delegate { app.ManualSwitch(Mode.Home, true); });
-            var miAway = new ToolStripMenuItem("切換成省電模式（將關閉自動模式）", null,
-                delegate { app.ManualSwitch(Mode.Away, false); });
-            var miAwayAuto = new ToolStripMenuItem("切換成省電模式並開啟自動模式", null,
-                delegate { app.ManualSwitch(Mode.Away, true); });
+            modesEnd = new ToolStripSeparator();   // 模式清單放在 miStatus 後的分隔線與這條分隔線之間
 
             miAuto = new ToolStripMenuItem("", null, delegate { app.SetAutoSwitch(!app.Config.AutoSwitch); });
 
@@ -96,10 +85,7 @@ namespace AutoDisplayMode
             {
                 miStatus,
                 new ToolStripSeparator(),
-                miHome,
-                miAway,
-                miAwayAuto,
-                new ToolStripSeparator(),
+                modesEnd,
                 miAuto,
                 miIdle,
                 miAudio,
@@ -118,7 +104,6 @@ namespace AutoDisplayMode
             tray.ContextMenuStrip = menu;
             tray.Visible = true;
             app.Changed += UpdateUi;
-
 
             timer = new System.Windows.Forms.Timer { Interval = 1000 };
             timer.Tick += delegate { app.Tick(); };
@@ -168,24 +153,59 @@ namespace AutoDisplayMode
         void UpdateUi()
         {
             AppConfig cfg = app.Config;
-            bool home = app.CurrentMode == Mode.Home;
-            string modeName = AppCoordinator.ModeName(app.CurrentMode);
+            string modeName = app.CurrentModeName;
+            string? target = app.SwitchTargetName;
 
-            miStatus.Text = "目前：" + modeName + (app.IsSwitching ? "（切換中…）" : "");
-            miAuto.Text = "切換自動模式 [目前：" + OnOff(cfg.AutoSwitch) + "]";
-            miIdle.Text = "自動模式時閒置切換成省電模式的時間 [目前：" + cfg.IdleMinutes + " 分]";
+            miStatus.Text = "目前：" + modeName + (target != null ? "（正在切換到「" + target + "」…）" : "");
+            UpdateModeItems();
+            miAuto.Text = "自動切換 [目前：" + OnOff(cfg.AutoSwitch) + "]";
+            miIdle.Text = LegacySwitchText("閒置切換的時間") + " [目前：" + cfg.IdleMinutes + " 分]";
             foreach (ToolStripMenuItem item in idleItems)
                 item.Checked = (int)item.Tag == cfg.IdleMinutes;
-            miAudio.Text = "自動模式偵測聲音 [目前：" + OnOff(cfg.AudioDetect) + "]";
+            miAudio.Text = "自動切換偵測聲音 [目前：" + OnOff(cfg.AudioDetect) + "]";
             miStartup.Text = "開機時自動開啟此程式 [目前：" + OnOff(app.StartupEnabled) + "]";
-            miCapture.Text = "將目前螢幕狀態存入「" + app.CurrentModeName + "」…";
+            miCapture.Text = "將目前螢幕狀態存入「" + modeName + "」…";
             miCapture.Enabled = !app.IsSwitching;
 
-            if (home) tray.Icon = cfg.AutoSwitch ? iconHomeAuto : iconHomeManual;
-            else tray.Icon = cfg.AutoSwitch ? iconAwayAuto : iconAwayManual;
+            tray.Icon = IconFor(cfg.CurrentModeConfig?.Color ?? ModeConfig.Palette[0], cfg.AutoSwitch);
 
-            string tip = AppTitle + "\n" + modeName + "｜自動模式：" + OnOff(cfg.AutoSwitch);
+            string tip = AppTitle + "\n" + modeName + (target != null ? "（切換中）" : "") + "｜自動切換：" + OnOff(cfg.AutoSwitch);
             tray.Text = tip.Length > 63 ? tip.Substring(0, 63) : tip;
+        }
+
+        /// <summary>重建模式清單：目前模式打勾，切換中的目標模式加上提示。</summary>
+        void UpdateModeItems()
+        {
+            foreach (ToolStripMenuItem item in modeItems)
+            {
+                menu.Items.Remove(item);
+                item.Image?.Dispose();
+                item.Dispose();
+            }
+            modeItems.Clear();
+
+            AppConfig cfg = app.Config;
+            int index = menu.Items.IndexOf(modesEnd);
+            foreach (ModeConfig mode in cfg.Modes)
+            {
+                int id = mode.Id;
+                string text = mode.Name.Replace("&", "&&");
+                if (id == app.SwitchTargetId) text += "（切換中…）";
+                var item = new ToolStripMenuItem(text, ColorSwatch(mode.Color), delegate { app.ManualSwitch(id); })
+                {
+                    Checked = id == cfg.CurrentModeId,
+                };
+                modeItems.Add(item);
+                menu.Items.Insert(index++, item);
+            }
+        }
+
+        /// <summary>舊版切換條件的選單文字：作用中時帶出模式名稱。</summary>
+        string LegacySwitchText(string what)
+        {
+            AppConfig cfg = app.Config;
+            if (!app.LegacySwitchActive) return "自動切換" + what;
+            return "「" + cfg.FindMode(cfg.HomeModeId)!.Name + "」" + what;
         }
 
         void ShowBalloon(string text, ToolTipIcon icon) => tray.ShowBalloonTip(4000, AppTitle, text, icon);
@@ -197,29 +217,28 @@ namespace AutoDisplayMode
             AppConfig cfg = app.Config;
             string help =
                 "【模式】\n" +
-                "・遊玩模式：執行 bat 並傳入參數，由cfg檔設定[當前為 " + cfg.HomeArgs + "]\n" +
-                "・省電模式：執行 bat 並傳入參數，由cfg檔設定[當前為 " + cfg.AwayArgs + "]\n" +
-                "・bat 路徑由cfg檔設定[當前為 " + cfg.BatPath + "]\n\n" +
-                "【自動模式】由選單或cfg檔設定[當前為" + OnOff(cfg.AutoSwitch) + "]\n" +
-                "・省電模式中，偵測到滑鼠移動或點擊，或電腦連續播放聲音，就切換成遊玩模式。\n" +
-                "・遊玩模式中，沒有任何鍵盤滑鼠操作、也沒有持續播放聲音，超過閒置時間後切換成省電模式。\n" +
+                "・右鍵選單列出所有模式，目前模式打勾；點一下即手動切換，依該模式記錄的螢幕設定套用。\n" +
+                "・模式中記錄但沒接上的螢幕會略過；接上但沒記錄的螢幕依模式的 UnlistedMonitors 設定維持現狀或關閉。\n" +
+                "・套用後沒有任何螢幕會開著時拒絕切換；套用失敗時維持原本的模式，自動切換暫停 1 分鐘。\n" +
+                "・手動切換進入模式時，自動切換依模式的 ManualAutoSwitch 設定維持、開啟或關閉。\n" +
+                "・模式目前只能在cfg檔中新增與修改。\n\n" +
+                "【自動切換】由選單或cfg檔設定[當前為" + OnOff(cfg.AutoSwitch) + "]\n" +
+                "・" + app.LegacySwitchSummary + "\n" +
+                "・扮演「遊玩」與「省電」的模式由cfg檔的 HomeMode／AwayMode 設定；處於其他模式時不自動切換。\n" +
+                "・「省電」模式中，偵測到實體滑鼠移動或點擊，或電腦連續播放聲音，就切換到「遊玩」模式。\n" +
+                "・「遊玩」模式中，沒有任何鍵盤滑鼠操作、也沒有持續播放聲音，超過閒置時間後切換到「省電」模式。\n" +
                 "・閒置時間由選單或cfg檔設定[當前為" + cfg.IdleMinutes + "分鐘]\n" +
                 "・聲音偵測由選單或cfg檔設定[當前為" + OnOff(cfg.AudioDetect) + "]\n" +
                 "・聲音需連續播放的秒數由cfg檔設定[當前為" + cfg.AudioSeconds + "秒]\n" +
                 "・聲音音量門檻由cfg檔設定[當前為" + cfg.AudioThreshold.ToString(CultureInfo.InvariantCulture) + "]\n" +
                 "・滑鼠移動門檻由cfg檔設定[當前為" + cfg.MouseMoveThreshold + "像素]\n" +
-                "・省電模式中忽略遠端連線軟體的滑鼠輸入，由cfg檔設定[當前為" + OnOff(cfg.IgnoreRemoteInput) + "]\n" +
-                "・自動切換時跳出通知，由cfg檔設定[當前為" + OnOff(cfg.ShowNotifications) + "]\n" +
-                "・手動選擇「切換成省電模式」會關閉自動模式，避免偵測到滑鼠動作被切回來；\n" +
-                "  選擇「切換成遊玩模式」會重新開啟自動模式。\n" +
-                "・「切換成省電模式並開啟自動模式」適合遠端時使用：遠端操作不會觸發切換，\n" +
-                "  回家動到實體滑鼠就會自動切回遊玩模式。\n\n" +
+                "・「省電」模式中忽略遠端連線軟體的滑鼠輸入，由cfg檔設定[當前為" + OnOff(cfg.IgnoreRemoteInput) + "]\n" +
+                "・自動切換時跳出通知，由cfg檔設定[當前為" + OnOff(cfg.ShowNotifications) + "]\n\n" +
                 "【擷取】\n" +
-                "・選單「將目前螢幕狀態存入「" + app.CurrentModeName + "」…」會把目前每台螢幕的狀態存進目前模式（cfg檔）。\n" +
-                "・此版本切換螢幕仍透過 bat，存入的螢幕設定會在之後的版本用來切換。\n\n" +
+                "・選單「將目前螢幕狀態存入「" + app.CurrentModeName + "」…」會把目前每台螢幕的狀態存進目前模式（cfg檔）。\n\n" +
                 "【圖示】\n" +
-                "・橘色：遊玩模式　綠色：省電模式\n" +
-                "・實心：自動模式開啟　空心：自動模式關閉\n\n" +
+                "・顏色：目前模式的顏色（cfg檔各模式的 Color）\n" +
+                "・實心：自動切換開啟　空心：自動切換關閉\n\n" +
                 "【設定檔】\n" +
                 "・位置：" + app.ConfigLocation + "\n" +
                 "・從選單「以文字文件開啟cfg檔」修改並存檔後，選「重新載入cfg檔」即生效。";
@@ -234,6 +253,18 @@ namespace AutoDisplayMode
             tray.Visible = false;
             tray.Dispose();
             ExitThread();
+        }
+
+        static Color ToColor(int rgb) => Color.FromArgb((rgb >> 16) & 0xFF, (rgb >> 8) & 0xFF, rgb & 0xFF);
+
+        Icon IconFor(int rgb, bool filled)
+        {
+            if (!icons.TryGetValue((rgb, filled), out Icon? icon))
+            {
+                icon = MakeIcon(ToColor(rgb), filled);
+                icons[(rgb, filled)] = icon;
+            }
+            return icon;
         }
 
         // 畫一個小螢幕圖示：實心 = 自動切換開，空心 = 自動切換關
@@ -256,6 +287,17 @@ namespace AutoDisplayMode
                 g.DrawLine(p, 9, 28, 23, 28);
             }
             return Icon.FromHandle(bmp.GetHicon());
+        }
+
+        /// <summary>選單中模式名稱前的顏色方塊。</summary>
+        static Image ColorSwatch(int rgb)
+        {
+            var bmp = new Bitmap(16, 16);
+            using Graphics g = Graphics.FromImage(bmp);
+            g.Clear(Color.Transparent);
+            using var b = new SolidBrush(ToColor(rgb));
+            g.FillRectangle(b, 2, 2, 12, 12);
+            return bmp;
         }
     }
 }

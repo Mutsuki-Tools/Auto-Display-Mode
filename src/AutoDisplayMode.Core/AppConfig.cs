@@ -3,13 +3,16 @@ using System.Collections.Generic;
 
 namespace AutoDisplayMode.Core
 {
-    /// <summary>舊版的兩個固定模式：遊玩、省電。此階段切換仍以它們透過 bat 進行，之後的版本移除。</summary>
+    /// <summary>
+    /// 舊版的兩個固定角色：遊玩、省電。過渡期間舊版的兩條切換條件以它們指向模式
+    /// （<see cref="AppConfig.HomeModeId"/>、<see cref="AppConfig.AwayModeId"/>），之後的版本改由切換條件取代並移除。
+    /// </summary>
     public enum Mode
     {
-        /// <summary>遊玩模式（cfg 中為 home）。</summary>
+        /// <summary>遊玩（cfg 中為 home）。</summary>
         Home,
 
-        /// <summary>省電模式（cfg 中為 away）。</summary>
+        /// <summary>省電（cfg 中為 away）。</summary>
         Away,
     }
 
@@ -39,21 +42,33 @@ namespace AutoDisplayMode.Core
         public List<ModeConfig> Modes { get; } = new();
 
         /// <summary>目前模式；沒有任何模式時為 null。</summary>
-        public ModeConfig? CurrentModeConfig => Modes.Find(m => m.Id == CurrentModeId);
+        public ModeConfig? CurrentModeConfig => FindMode(CurrentModeId);
 
-        // ---- 舊版切換（過渡用：此階段切換仍透過 bat，之後的版本移除）----
+        public ModeConfig? FindMode(int id) => Modes.Find(m => m.Id == id);
 
-        public string BatPath { get; set; } = @"C:\multimonitortool-x64\monitormode.bat";
-        public string HomeArgs { get; set; } = "home";
-        public string AwayArgs { get; set; } = "away";
+        // ---- 舊版切換條件（過渡用：之後的版本改由切換條件取代並移除）----
+
+        /// <summary>遊玩模式閒置幾分鐘後切換到省電模式。</summary>
         public int IdleMinutes { get; set; } = 10;
+
+        /// <summary>省電模式中持續播放聲音算不算使用；遊玩模式中持續播放聲音會不會打斷閒置計時。</summary>
         public bool AudioDetect { get; set; } = true;
-        public Mode LastMode { get; set; } = Mode.Home;
 
-        /// <summary>切換到 <paramref name="mode"/> 時傳給 bat 的參數。</summary>
-        public string ArgsFor(Mode mode) => mode == Mode.Home ? HomeArgs : AwayArgs;
+        /// <summary>舊版切換條件中扮演「遊玩」的模式 ID；0 表示沒有。</summary>
+        public int HomeModeId { get; set; }
 
-        internal static string ModeKey(Mode mode) => mode == Mode.Home ? "home" : "away";
+        /// <summary>舊版切換條件中扮演「省電」的模式 ID；0 表示沒有。</summary>
+        public int AwayModeId { get; set; }
+
+        /// <summary>模式 <paramref name="modeId"/> 在舊版切換條件中扮演的角色；都不是時為 null。</summary>
+        public Mode? LegacyRoleOf(int modeId) =>
+            modeId == 0 ? null : modeId == HomeModeId ? Mode.Home : modeId == AwayModeId ? Mode.Away : null;
+
+        /// <summary>讀取時 cfg 中是否有 HomeMode／AwayMode 鍵（沒有時以 <see cref="LegacyLastMode"/> 轉移）。</summary>
+        internal bool LegacyRolesSpecified { get; set; }
+
+        /// <summary>讀取時 cfg 中的舊鍵 LastMode（遊玩/省電）；只用來轉移成 HomeMode／AwayMode，不再寫出。</summary>
+        internal Mode? LegacyLastMode { get; set; }
 
         internal static Mode ParseMode(string s) =>
             string.Equals(s.Trim(), "away", StringComparison.OrdinalIgnoreCase) ? Mode.Away : Mode.Home;

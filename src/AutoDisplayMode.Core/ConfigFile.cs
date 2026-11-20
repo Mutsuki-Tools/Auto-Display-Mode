@@ -39,8 +39,8 @@ namespace AutoDisplayMode.Core
 
         /// <summary>
         /// 讀取舊格式 cfg 並轉成新設定（尚無模式）。轉移自動切換、滑鼠移動門檻、聲音音量門檻、
-        /// 聲音持續秒數、忽略遠端輸入、通知；bat 路徑與參數、閒置分鐘、聲音偵測、遊玩/省電模式
-        /// 暫時移到「舊版切換」分段（此階段切換仍透過 bat），其餘捨棄。
+        /// 聲音持續秒數、忽略遠端輸入、通知；閒置分鐘、聲音偵測、遊玩/省電模式暫時移到「舊版切換條件」分段
+        /// （之後的版本改由切換條件取代），bat 路徑與參數等其餘的值捨棄。
         /// </summary>
         public static AppConfig MigrateLegacy(string text)
         {
@@ -91,8 +91,7 @@ namespace AutoDisplayMode.Core
                 else if (TryParseModeSection(name, out modeId))
                 {
                     if (c.Modes.Exists(m => m.Id == modeId)) continue;   // 重複的模式 ID：只認第一個
-                    string modeName = values.LastOrDefault(kv => kv.Key == "name").Value?.Trim() ?? "";
-                    c.Modes.Add(new ModeConfig(modeId, modeName.Length > 0 ? modeName : "模式 " + modeId));
+                    c.Modes.Add(ReadMode(modeId, values));
                 }
             }
 
@@ -124,13 +123,55 @@ namespace AutoDisplayMode.Core
         {
             switch (key)
             {
-                case "batpath": c.BatPath = val.Trim('"'); break;
-                case "homeargs": c.HomeArgs = val; break;
-                case "awayargs": c.AwayArgs = val; break;
                 case "idleminutes": c.IdleMinutes = ParseInt(val, c.IdleMinutes); break;
                 case "audiodetect": c.AudioDetect = ParseBool(val, c.AudioDetect); break;
-                case "lastmode": c.LastMode = AppConfig.ParseMode(val); break;
+                case "lastmode": c.LegacyLastMode = AppConfig.ParseMode(val); break;
+                case "homemode":
+                    c.HomeModeId = ParseInt(val, 0);
+                    c.LegacyRolesSpecified = true;
+                    break;
+                case "awaymode":
+                    c.AwayModeId = ParseInt(val, 0);
+                    c.LegacyRolesSpecified = true;
+                    break;
             }
+        }
+
+        static ModeConfig ReadMode(int id, List<(string Key, string Value)> values)
+        {
+            var mode = new ModeConfig(id, "模式 " + id);
+            foreach (var (key, val) in values)
+            {
+                switch (key)
+                {
+                    case "name":
+                        if (val.Trim().Length > 0) mode.Name = val.Trim();
+                        break;
+                    case "color": mode.Color = ParseColor(val, mode.Color); break;
+                    case "manualautoswitch": mode.ManualAutoSwitch = ParseEnum(val, mode.ManualAutoSwitch); break;
+                    case "unlistedmonitors": mode.UnlistedMonitors = ParseEnum(val, mode.UnlistedMonitors); break;
+                }
+            }
+            return mode;
+        }
+
+        /// <summary>
+        /// 讓舊版切換條件指向存在的模式。cfg 中沒有 HomeMode／AwayMode 時（由票 02 的 cfg 或舊格式升級），
+        /// 以舊鍵 LastMode 轉移：目前模式就是當時擷取的遊玩或省電狀態。指向不存在的模式、或兩者相同時清除。
+        /// </summary>
+        public static void ResolveLegacyRoles(AppConfig c)
+        {
+            if (!c.LegacyRolesSpecified && c.LegacyLastMode is Mode role && c.CurrentModeConfig != null)
+            {
+                if (role == Mode.Home) c.HomeModeId = c.CurrentModeId;
+                else c.AwayModeId = c.CurrentModeId;
+            }
+            c.LegacyRolesSpecified = true;
+            c.LegacyLastMode = null;
+
+            if (c.FindMode(c.HomeModeId) == null) c.HomeModeId = 0;
+            if (c.FindMode(c.AwayModeId) == null) c.AwayModeId = 0;
+            if (c.AwayModeId == c.HomeModeId) c.AwayModeId = 0;
         }
 
         static MonitorSettings? ReadMonitor(List<(string Key, string Value)> values)
@@ -149,7 +190,7 @@ namespace AutoDisplayMode.Core
                     case "width": m = m with { Width = ParseInt(val, m.Width) }; break;
                     case "height": m = m with { Height = ParseInt(val, m.Height) }; break;
                     case "refreshrate": m = m with { RefreshRate = ParseInt(val, m.RefreshRate) }; break;
-                    case "orientation": m = m with { Orientation = ParseOrientation(val, m.Orientation) }; break;
+                    case "orientation": m = m with { Orientation = ParseEnum(val, m.Orientation) }; break;
                     case "primary": m = m with { Primary = ParseBool(val, m.Primary) }; break;
                 }
             }
@@ -207,6 +248,7 @@ namespace AutoDisplayMode.Core
             if (c.IdleMinutes < 1) c.IdleMinutes = 10;
             if (c.AudioSeconds < 1) c.AudioSeconds = 3;
             if (c.MouseMoveThreshold < 1) c.MouseMoveThreshold = 1;
+            ModeConfig.AssignMissingColors(c.Modes);
         }
 
         // ------------------------------------------------------------
@@ -250,27 +292,29 @@ namespace AutoDisplayMode.Core
             Line("StartWithWindows=" + Bool(c.StartWithWindows));
             Line();
 
-            Title("舊版切換（過渡用）");
-            Line("# 目前切換螢幕仍透過 bat；之後的版本改為依模式套用後，這一段會被移除。");
+            Title("舊版切換條件（過渡用）");
+            Line("# 自動切換開啟時：處於「遊玩」模式且閒置 IdleMinutes 分鐘 → 切換到「省電」模式；");
+            Line("# 處於「省電」模式且偵測到實體滑鼠使用（或持續播放聲音）→ 切換到「遊玩」模式。");
+            Line("# 處於其他模式時不自動切換。之後的版本改由切換條件取代，這一段會被移除。");
             Line("[" + LegacySection + "]");
-            Line("# 螢幕切換 bat 的完整路徑");
-            Line("BatPath=" + c.BatPath);
-            Line("# 切換成遊玩模式 / 省電模式時傳給 bat 的參數");
-            Line("HomeArgs=" + c.HomeArgs);
-            Line("AwayArgs=" + c.AwayArgs);
-            Line("# 遊玩模式閒置幾分鐘後切換成省電模式（也可以從右鍵選單調整）");
+            Line("# 扮演「遊玩」與「省電」的模式（填 [Mode.N] 的 N；0 = 沒有；兩者都指定時這兩條切換條件才作用）");
+            Line("HomeMode=" + Int(c.HomeModeId));
+            Line("AwayMode=" + Int(c.AwayModeId));
+            Line("# 「遊玩」模式閒置幾分鐘後切換到「省電」模式（也可以從右鍵選單調整）");
             Line("IdleMinutes=" + Int(c.IdleMinutes));
             Line("# 聲音偵測（1=開啟，也可以從右鍵選單調整）");
             Line("AudioDetect=" + Bool(c.AudioDetect));
-            Line("# 目前是遊玩模式（home）或省電模式（away）");
-            Line("LastMode=" + AppConfig.ModeKey(c.LastMode));
 
             if (c.Modes.Count > 0)
             {
                 Line();
                 Line("# ------------------------------------------------------------");
                 Line("#  模式與螢幕設定");
-                Line("#  [Mode.N] 是一個模式，N 為模式的 ID（不會因改名而變）。");
+                Line("#  [Mode.N] 是一個模式，N 為模式的 ID（不會因改名而變）：");
+                Line("#    Name              模式名稱");
+                Line("#    Color             工作列圖示顏色（#RRGGBB）");
+                Line("#    ManualAutoSwitch  手動切換進入此模式時，自動切換要 Keep（維持）、On（開啟）或 Off（關閉）");
+                Line("#    UnlistedMonitors  套用此模式時，接上但下方沒有記錄的螢幕要 Keep（維持現狀）或 Off（關閉）");
                 Line("#  [Mode.N.Monitor.K] 是模式 N 中一台螢幕的螢幕設定，K 只是順序：");
                 Line("#    Monitor      螢幕識別：廠牌/型號/SN:序號（讀不到序號時為 廠牌/型號/PORT:接孔）");
                 Line("#    Name         螢幕名稱（僅供辨識）");
@@ -289,8 +333,10 @@ namespace AutoDisplayMode.Core
                 Line();
                 Title("模式「" + modeName + "」");
                 Line("[" + ModePrefix + Int(mode.Id) + "]");
-                Line("# 模式名稱");
                 Line("Name=" + modeName);
+                Line("Color=" + FormatColor(mode.Color));
+                Line("ManualAutoSwitch=" + mode.ManualAutoSwitch);
+                Line("UnlistedMonitors=" + mode.UnlistedMonitors);
 
                 int k = 0;
                 foreach (MonitorSettings m in mode.Monitors)
@@ -365,7 +411,17 @@ namespace AutoDisplayMode.Core
         static double ParseDouble(string s, double def) =>
             double.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out double v) ? v : def;
 
-        static Orientation ParseOrientation(string s, Orientation def) =>
-            Enum.TryParse(s.Trim(), true, out Orientation o) && Enum.IsDefined(typeof(Orientation), o) ? o : def;
+        /// <summary>依名稱解析列舉（不分大小寫）。</summary>
+        static T ParseEnum<T>(string s, T def) where T : struct, Enum =>
+            Enum.TryParse(s.Trim(), true, out T v) && Enum.IsDefined(typeof(T), v) ? v : def;
+
+        /// <summary>#RRGGBB（# 可省略）；格式不符時回傳 <paramref name="def"/>。</summary>
+        static int ParseColor(string s, int def)
+        {
+            s = s.Trim().TrimStart('#');
+            return s.Length == 6 && int.TryParse(s, NumberStyles.AllowHexSpecifier, CultureInfo.InvariantCulture, out int v) ? v : def;
+        }
+
+        static string FormatColor(int rgb) => "#" + (rgb & 0xFFFFFF).ToString("X6", CultureInfo.InvariantCulture);
     }
 }

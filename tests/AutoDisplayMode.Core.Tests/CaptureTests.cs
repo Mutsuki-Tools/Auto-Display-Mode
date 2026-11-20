@@ -133,7 +133,8 @@ namespace AutoDisplayMode.Core.Tests
         public void 切換中不能擷取()
         {
             var h = new Harness(Cfg());
-            h.App.ManualSwitch(Mode.Away, autoSwitch: false);
+            h.App.ManualSwitch(2);
+            Assert.True(h.App.IsSwitching);
             string before = h.Store.Text!;
 
             h.App.CaptureToCurrentMode();

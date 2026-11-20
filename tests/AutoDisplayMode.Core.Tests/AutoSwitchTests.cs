@@ -1,27 +1,29 @@
-using System.Linq;
 using AutoDisplayMode.Core;
 using Xunit;
 
 namespace AutoDisplayMode.Core.Tests
 {
+    /// <summary>過渡期的舊版兩條切換條件，以 HomeMode／AwayMode 指向模式。</summary>
     public class AutoSwitchTests
     {
-        static Harness InHome(params string[] extra) =>
-            new(Harness.Cfg(new[] { "AutoMode=1", "IdleMinutes=5", "LastMode=home", "AudioSeconds=3", "AudioThreshold=0.1" }.Concat(extra).ToArray()));
+        static Harness InHome(params string[] extra) => Harness.TwoModes("home", extra);
 
-        static Harness InAway(params string[] extra) =>
-            new(Harness.Cfg(new[] { "AutoMode=1", "IdleMinutes=5", "LastMode=away", "AudioSeconds=3", "AudioThreshold=0.1" }.Concat(extra).ToArray()));
+        static Harness InAway(params string[] extra) => Harness.TwoModes("away", extra);
 
         [Fact]
         public void 遊玩模式閒置達指定分鐘後切換到省電模式()
         {
-            var h = new Harness(Harness.Cfg("AutoMode=1", "IdleMinutes=5", "LastMode=home", "BatPath=C:\\x\\m.bat", "AwayArgs=away"));
+            var h = InHome();
 
             int seconds = h.RunUntilSwitch(10 * 60);
 
             Assert.Equal(5 * 60, seconds);
-            Assert.Equal((Mode.Away, "C:\\x\\m.bat", "away"), Assert.Single(h.Switcher.Started));
-            Assert.Equal(Mode.Away, h.App.CurrentMode);
+            Assert.Equal("省電", Assert.Single(h.Monitors.AppliedTargets));
+            var state = Assert.Single(h.LastApplied);
+            Assert.Equal((1280, 720), (state.Width, state.Height));   // 依「省電」模式的螢幕設定套用
+
+            h.FinishSwitch();
+            Assert.Equal(2, h.App.Config.CurrentModeId);
         }
 
         [Fact]
@@ -39,15 +41,16 @@ namespace AutoDisplayMode.Core.Tests
         [Fact]
         public void 省電模式中偵測到滑鼠使用就切換到遊玩模式()
         {
-            var h = InAway("HomeArgs=home");
+            var h = InAway();
             h.Run(10);   // 度過啟動緩衝期
-            Assert.Empty(h.Switcher.Started);
+            Assert.Empty(h.Monitors.Applied);
 
             h.Signals.MoveMouse();
             h.Run(1);
 
-            Assert.Equal(Mode.Home, Assert.Single(h.Switcher.Started).Target);
-            Assert.Equal(Mode.Home, h.App.CurrentMode);
+            Assert.Equal("遊玩", Assert.Single(h.Monitors.AppliedTargets));
+            h.FinishSwitch();
+            Assert.Equal(1, h.App.Config.CurrentModeId);
         }
 
         [Fact]
@@ -59,7 +62,7 @@ namespace AutoDisplayMode.Core.Tests
             h.Signals.UseKeyboardOrMouse();
             h.Run(5);
 
-            Assert.Empty(h.Switcher.Started);
+            Assert.Empty(h.Monitors.Applied);
         }
 
         [Fact]
@@ -70,10 +73,10 @@ namespace AutoDisplayMode.Core.Tests
 
             h.Signals.AudioPeak = 0.5f;
             h.Run(3);
-            Assert.Empty(h.Switcher.Started);
+            Assert.Empty(h.Monitors.Applied);
 
             h.Run(1);
-            Assert.Equal(Mode.Home, Assert.Single(h.Switcher.Started).Target);
+            Assert.Equal("遊玩", Assert.Single(h.Monitors.AppliedTargets));
         }
 
         [Fact]
@@ -90,7 +93,7 @@ namespace AutoDisplayMode.Core.Tests
                 h.Run(1);
             }
 
-            Assert.Empty(h.Switcher.Started);
+            Assert.Empty(h.Monitors.Applied);
         }
 
         [Fact]
@@ -102,7 +105,7 @@ namespace AutoDisplayMode.Core.Tests
             h.Signals.AudioPeak = 0.09f;
             h.Run(30);
 
-            Assert.Empty(h.Switcher.Started);
+            Assert.Empty(h.Monitors.Applied);
         }
 
         [Fact]
@@ -123,7 +126,48 @@ namespace AutoDisplayMode.Core.Tests
             h.Signals.AudioPeak = 0.5f;
             h.Run(30);
 
-            Assert.Empty(h.Switcher.Started);
+            Assert.Empty(h.Monitors.Applied);
+        }
+
+        // ---- 舊版切換條件對應到模式 ----
+
+        [Fact]
+        public void 處於舊版切換條件以外的模式時不自動切換也不掛滑鼠鉤子()
+        {
+            var h = new Harness(Harness.Cfg(
+                "[General]", "AutoSwitch=1", "CurrentMode=3",
+                "[LegacySwitch]", "HomeMode=1", "AwayMode=2", "IdleMinutes=5",
+                "[Mode.1]", "Name=遊玩", "[Mode.2]", "Name=省電", "[Mode.3]", "Name=簡報",
+                "[Mode.3.Monitor.1]", "Monitor=" + Harness.DefaultMonitor.Id, "Enabled=1", "Primary=1"));
+
+            Assert.Equal(-1, h.RunUntilSwitch(30 * 60, () => { h.Signals.AudioPeak = 0.5f; h.Signals.MoveMouse(); }));
+            Assert.False(h.Signals.Policy.Install);
+        }
+
+        [Fact]
+        public void 手動切換到舊版切換條件中的模式後從該模式出發()
+        {
+            var h = new Harness(Harness.Cfg(
+                "[General]", "AutoSwitch=1", "CurrentMode=3",
+                "[LegacySwitch]", "HomeMode=1", "AwayMode=2", "IdleMinutes=5",
+                "[Mode.1]", "Name=遊玩", "[Mode.2]", "Name=省電", "[Mode.3]", "Name=簡報",
+                "[Mode.1.Monitor.1]", "Monitor=" + Harness.DefaultMonitor.Id, "Enabled=1", "Primary=1",
+                "[Mode.2.Monitor.1]", "Monitor=" + Harness.DefaultMonitor.Id, "Enabled=1", "Primary=1"));
+
+            h.App.ManualSwitch(1);
+            h.FinishSwitch();
+
+            Assert.Equal(5 * 60, h.RunUntilSwitch(10 * 60));   // 從切換完成起閒置滿 5 分鐘
+            Assert.Equal("省電", h.Monitors.AppliedTargets[1]);
+        }
+
+        [Fact]
+        public void 只設定其中一個角色時舊版切換條件不作用()
+        {
+            var h = Harness.TwoModes("home", "AwayMode=0");
+
+            Assert.Equal(-1, h.RunUntilSwitch(30 * 60));
+            Assert.Equal(0, h.App.Config.AwayModeId);
         }
     }
 }

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using AutoDisplayMode.Core;
 
 namespace AutoDisplayMode.Core.Tests
@@ -7,17 +8,6 @@ namespace AutoDisplayMode.Core.Tests
     sealed class FakeClock : IClock
     {
         public long NowMs { get; set; } = 1_000_000;
-    }
-
-    sealed class FakeSwitcher : IDisplaySwitcher
-    {
-        public bool Ready { get; set; } = true;
-        public List<(Mode Target, string Bat, string Args)> Started { get; } = new();
-
-        public bool IsReady(AppConfig config) => Ready;
-
-        public void Begin(Mode target, AppConfig config) =>
-            Started.Add((target, config.BatPath, config.ArgsFor(target)));
     }
 
     sealed class FakeSignals : IUsageSignals
@@ -89,8 +79,23 @@ namespace AutoDisplayMode.Core.Tests
         public List<DetectedMonitor> Monitors { get; set; }
         public bool Fail { get; set; }
 
+        /// <summary>每次開始套用時要求的完整螢幕狀態。</summary>
+        public List<IReadOnlyList<MonitorSettings>> Applied { get; } = new();
+
         public IReadOnlyList<DetectedMonitor> Detect() =>
             Fail ? throw new InvalidOperationException("偵測失敗") : Monitors.ToArray();
+
+        /// <summary>每次開始套用時，協調者回報的目標模式名稱。</summary>
+        public List<string?> AppliedTargets { get; } = new();
+
+        /// <summary>開始套用時用來讀取目標模式名稱。</summary>
+        public Func<string?>? TargetName { get; set; }
+
+        public void BeginApply(IReadOnlyList<MonitorSettings> states)
+        {
+            Applied.Add(states);
+            AppliedTargets.Add(TargetName?.Invoke());
+        }
     }
 
     /// <summary>建立假螢幕的捷徑。</summary>
@@ -138,7 +143,6 @@ namespace AutoDisplayMode.Core.Tests
     sealed class Harness
     {
         public FakeClock Clock { get; } = new();
-        public FakeSwitcher Switcher { get; } = new();
         public FakeSignals Signals { get; }
         public FakeStore Store { get; }
         public FakeStartup Startup { get; } = new();
@@ -155,7 +159,8 @@ namespace AutoDisplayMode.Core.Tests
             Store = new FakeStore(cfg);
             Monitors = new FakeMonitors(monitors ?? new[] { DefaultMonitor });
             Startup.IsEnabled = startupEnabled;
-            App = new AppCoordinator(Store, Switcher, Monitors, Signals, Clock, Startup, Notifier);
+            App = new AppCoordinator(Store, Monitors, Signals, Clock, Startup, Notifier);
+            Monitors.TargetName = () => App.SwitchTargetName;
             if (start) App.Start();
         }
 
@@ -173,18 +178,48 @@ namespace AutoDisplayMode.Core.Tests
         /// <summary>一直 tick 到開始切換為止（最多 <paramref name="maxSeconds"/> 秒），回傳經過的秒數；沒切換則回傳 -1。</summary>
         public int RunUntilSwitch(int maxSeconds, Action? eachSecond = null)
         {
-            int before = Switcher.Started.Count;
+            int before = Monitors.Applied.Count;
             for (int i = 1; i <= maxSeconds; i++)
             {
                 Run(1, eachSecond);
-                if (Switcher.Started.Count > before) return i;
+                if (Monitors.Applied.Count > before) return i;
             }
             return -1;
         }
+
+        /// <summary>最後一次開始套用時要求的螢幕狀態。</summary>
+        public IReadOnlyList<MonitorSettings> LastApplied => Monitors.Applied[Monitors.Applied.Count - 1];
 
         /// <summary>完成目前進行中的切換。</summary>
         public void FinishSwitch(string? error = null) => App.OnSwitchFinished(error);
 
         public static string Cfg(params string[] lines) => string.Join("\r\n", lines) + "\r\n";
+
+        /// <summary>
+        /// 兩個模式「遊玩」（1）與「省電」（2），舊版切換條件 HomeMode=1、AwayMode=2，各記錄預設螢幕為主螢幕。
+        /// <paramref name="current"/> 為 home 或 away。<paramref name="extra"/> 中的 IdleMinutes、AudioDetect、HomeMode、AwayMode
+        /// 放在 [LegacySwitch]，其餘放在 [General]（後寫的覆蓋先寫的）。
+        /// </summary>
+        public static Harness TwoModes(string current, params string[] extra)
+        {
+            static bool IsLegacy(string line) =>
+                new[] { "IdleMinutes=", "AudioDetect=", "HomeMode=", "AwayMode=" }
+                    .Any(k => line.StartsWith(k, StringComparison.OrdinalIgnoreCase));
+            static string Monitor(int mode, int w, int h) => Cfg(
+                "[Mode." + mode + ".Monitor.1]", "Monitor=" + DefaultMonitor.Id, "Enabled=1", "X=0", "Y=0",
+                "Width=" + w, "Height=" + h, "RefreshRate=60", "Primary=1");
+
+            var general = new List<string>
+            {
+                "[General]", "AutoSwitch=1", "CurrentMode=" + (current == "away" ? 2 : 1), "AudioSeconds=3", "AudioThreshold=0.1",
+            };
+            var legacy = new List<string> { "[LegacySwitch]", "HomeMode=1", "AwayMode=2", "IdleMinutes=5" };
+            foreach (string line in extra) (IsLegacy(line) ? legacy : general).Add(line);
+
+            return new Harness(
+                Cfg(general.ToArray()) + Cfg(legacy.ToArray()) +
+                Cfg("[Mode.1]", "Name=遊玩") + Monitor(1, 1920, 1080) +
+                Cfg("[Mode.2]", "Name=省電") + Monitor(2, 1280, 720));
+        }
     }
 }

@@ -11,24 +11,17 @@ namespace AutoDisplayMode.Core
         long NowMs { get; }
     }
 
-    /// <summary>
-    /// 螢幕切換執行。此階段由轉接層呼叫 bat 完成。
-    /// 切換在背景進行，結束後轉接層須在 UI 執行緒呼叫 <see cref="AppCoordinator.OnSwitchFinished"/>。
-    /// </summary>
-    public interface IDisplaySwitcher
-    {
-        /// <summary>目前的設定是否能執行切換（此階段：bat 檔是否存在）。</summary>
-        bool IsReady(AppConfig config);
-
-        /// <summary>開始在背景切換到 <paramref name="target"/>。</summary>
-        void Begin(Mode target, AppConfig config);
-    }
-
-    /// <summary>螢幕系統：偵測目前接上的螢幕。（套用螢幕狀態在之後的版本加入，此階段切換仍透過 <see cref="IDisplaySwitcher"/>。）</summary>
+    /// <summary>螢幕系統：偵測目前接上的螢幕，以及套用一份完整的螢幕狀態。</summary>
     public interface IMonitorSystem
     {
         /// <summary>列出目前接上的每台螢幕（包含接上但關閉的）。偵測失敗時丟出例外。</summary>
         IReadOnlyList<DetectedMonitor> Detect();
+
+        /// <summary>
+        /// 開始在背景套用 <paramref name="states"/>（每台接上的螢幕一筆，主螢幕位於 (0,0)）。
+        /// 結束後轉接層須在 UI 執行緒呼叫 <see cref="AppCoordinator.OnSwitchFinished"/>。
+        /// </summary>
+        void BeginApply(IReadOnlyList<MonitorSettings> states);
     }
 
     /// <summary>

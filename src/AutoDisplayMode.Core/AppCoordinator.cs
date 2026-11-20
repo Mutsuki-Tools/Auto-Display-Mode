@@ -6,7 +6,7 @@ namespace AutoDisplayMode.Core
 {
     /// <summary>
     /// 應用程式協調者：核心對外的單一入口，也是唯一的測試接縫。
-    /// 負責閒置判斷、聲音持續判斷、緩衝期、手動切換與 cfg 讀寫；
+    /// 負責閒置判斷、聲音持續判斷、緩衝期、手動切換、套用模式與 cfg 讀寫；
     /// 透過 Ports.cs 中的介面與 Windows 轉接層互動。
     /// </summary>
     /// <remarks>所有方法都必須在同一個（UI）執行緒上呼叫。</remarks>
@@ -18,15 +18,15 @@ namespace AutoDisplayMode.Core
         const long SwitchingGraceMs = 120_000;
         /// <summary>切換完成後的緩衝期：螢幕重新排列時游標可能被系統移動。</summary>
         const long AfterSwitchGraceMs = 10_000;
-        /// <summary>無法切換（找不到 bat）時暫停自動切換的時間。</summary>
-        const long NotReadyPauseMs = 60_000;
+        /// <summary>切換失敗（或被拒絕）後暫停自動切換的時間，避免每秒重試、一直跳通知。</summary>
+        const long FailurePauseMs = 60_000;
         /// <summary>手動開關自動切換後的緩衝期。</summary>
         const long ToggleGraceMs = 3_000;
         /// <summary>首次啟動時以目前螢幕狀態建立的模式名稱。</summary>
         const string DefaultModeName = "預設";
+        const string BusyText = "正在切換中，請稍候。";
 
         readonly IConfigStore store;
-        readonly IDisplaySwitcher switcher;
         readonly IMonitorSystem monitors;
         readonly IUsageSignals signals;
         readonly IClock clock;
@@ -35,17 +35,21 @@ namespace AutoDisplayMode.Core
 
         AppConfig config;
         long lastUsageMs;     // 最後一次偵測到使用的時間
-        long ignoreUntilMs;   // 在這個時間之前不做自動切換（切換螢幕後的緩衝）
+        long ignoreUntilMs;   // 在這個時間之前不做自動切換（切換螢幕後的緩衝、失敗後的暫停）
         int audioStreak;      // 連續偵測到聲音的秒數
-        uint lastInputTick;   // 遊玩模式用：Windows 最後輸入時間
+        uint lastInputTick;   // 「遊玩」模式用：Windows 最後輸入時間
         bool writesBlocked;   // cfg 讀取或舊版備份失敗：不寫入 cfg，避免覆蓋原本的內容
         string loadNote = ""; // 載入 cfg 時發生的事（轉移、備份失敗等），附加在下一則通知中
 
-        public AppCoordinator(IConfigStore store, IDisplaySwitcher switcher, IMonitorSystem monitors, IUsageSignals signals,
+        /// <summary>進行中的切換：目標模式、是否為手動切換、自動切換成功時要跳出的通知。</summary>
+        sealed record PendingSwitch(int ModeId, string ModeName, bool Manual, string? NotifyText);
+
+        PendingSwitch? pending;   // 未切換時為 null
+
+        public AppCoordinator(IConfigStore store, IMonitorSystem monitors, IUsageSignals signals,
             IClock clock, IStartupRegistration startup, INotifier notifier)
         {
             this.store = store;
-            this.switcher = switcher;
             this.monitors = monitors;
             this.signals = signals;
             this.clock = clock;
@@ -53,16 +57,19 @@ namespace AutoDisplayMode.Core
             this.notifier = notifier;
 
             config = LoadConfig();
-            CurrentMode = config.LastMode;
         }
 
         /// <summary>狀態改變（介面需要更新）時觸發。</summary>
         public event Action? Changed;
 
-        public Mode CurrentMode { get; private set; }
-
         /// <summary>螢幕切換執行中。</summary>
-        public bool IsSwitching { get; private set; }
+        public bool IsSwitching => pending != null;
+
+        /// <summary>切換中的目標模式 ID；未切換時為 0。</summary>
+        public int SwitchTargetId => pending?.ModeId ?? 0;
+
+        /// <summary>切換中的目標模式名稱；未切換時為 null。</summary>
+        public string? SwitchTargetName => pending?.ModeName;
 
         /// <summary>目前的設定。請勿直接修改，改用協調者的方法。</summary>
         public AppConfig Config => config;
@@ -71,12 +78,26 @@ namespace AutoDisplayMode.Core
 
         public bool StartupEnabled => startup.IsEnabled;
 
-        /// <summary>目前狀態的摘要文字（通知用）。</summary>
-        public string StatusSummary =>
-            "目前：" + ModeName(CurrentMode) + "｜自動模式：" + OnOff(config.AutoSwitch) + "\n" +
-            "閒置 " + config.IdleMinutes + " 分鐘切換省電｜聲音偵測：" + OnOff(config.AudioDetect);
+        /// <summary>目前模式的名稱。</summary>
+        public string CurrentModeName => config.CurrentModeConfig?.Name ?? "";
 
-        public static string ModeName(Mode mode) => mode == Mode.Home ? "遊玩模式" : "省電模式";
+        /// <summary>舊版的兩條切換條件是否作用中（「遊玩」與「省電」都指向存在的模式）。</summary>
+        public bool LegacySwitchActive => config.HomeModeId != 0 && config.AwayModeId != 0;
+
+        /// <summary>目前狀態的摘要文字（通知用）。</summary>
+        public string StatusSummary => "目前：" + CurrentModeName + "｜自動切換：" + OnOff(config.AutoSwitch) + "\n" + LegacySwitchSummary;
+
+        /// <summary>舊版切換條件的摘要文字。</summary>
+        public string LegacySwitchSummary
+        {
+            get
+            {
+                if (!LegacySwitchActive) return "舊版切換條件未設定（cfg 的 HomeMode／AwayMode）";
+                string home = config.FindMode(config.HomeModeId)!.Name, away = config.FindMode(config.AwayModeId)!.Name;
+                return "「" + home + "」閒置 " + config.IdleMinutes + " 分鐘 →「" + away + "」；「" + away + "」偵測到使用 →「" + home + "」" +
+                       "｜聲音偵測：" + OnOff(config.AudioDetect);
+            }
+        }
 
         static string OnOff(bool b) => b ? "開" : "關";
 
@@ -84,7 +105,7 @@ namespace AutoDisplayMode.Core
         //  啟動與每秒檢查
         // ------------------------------------------------------------
 
-        /// <summary>程式啟動（訊息迴圈開始後）呼叫一次。</summary>
+        /// <summary>程式啟動（訊息迴圈開始後）呼叫一次。啟動時不套用任何模式。</summary>
         public void Start()
         {
             long now = clock.NowMs;
@@ -98,6 +119,7 @@ namespace AutoDisplayMode.Core
         public void Tick()
         {
             long now = clock.NowMs;
+            Mode? role = config.LegacyRoleOf(config.CurrentModeId);
 
             // 聲音：連續超過 AudioSeconds 秒才算
             bool sound = config.AudioDetect && signals.ReadAudioPeak() > config.AudioThreshold;
@@ -105,14 +127,14 @@ namespace AutoDisplayMode.Core
             bool usage = audioStreak > config.AudioSeconds;
 
             bool mouse = signals.TakeMouseUsage();
-            if (CurrentMode == Mode.Away)
+            if (role == Mode.Away)
             {
-                // 省電模式：只看實體滑鼠（低階滑鼠鉤子，可分辨遠端軟體送出的輸入）
+                // 「省電」模式：只看實體滑鼠（低階滑鼠鉤子，可分辨遠端軟體送出的輸入）
                 if (mouse) usage = true;
             }
             else
             {
-                // 遊玩模式：看 Windows 最後輸入時間（不掛鉤子，不影響遊戲滑鼠延遲）
+                // 其他模式：看 Windows 最後輸入時間（不掛鉤子，不影響遊戲滑鼠延遲）
                 uint t = signals.LastInputTick;
                 if (t != lastInputTick)
                 {
@@ -124,22 +146,25 @@ namespace AutoDisplayMode.Core
 
             ApplyHookPolicy();
 
-            if (!config.AutoSwitch || IsSwitching || now < ignoreUntilMs) return;
+            if (!config.AutoSwitch || IsSwitching || now < ignoreUntilMs || !LegacySwitchActive) return;
 
-            if (CurrentMode == Mode.Away)
+            if (role == Mode.Away)
             {
-                if (usage) SwitchTo(Mode.Home, "偵測到使用中，已自動切換成遊玩模式。");
+                ModeConfig home = config.FindMode(config.HomeModeId)!;
+                if (usage) SwitchTo(home, manual: false, "偵測到使用，已自動切換到「" + home.Name + "」。");
             }
-            else if (now - lastUsageMs >= config.IdleMinutes * 60_000L)
+            else if (role == Mode.Home && now - lastUsageMs >= config.IdleMinutes * 60_000L)
             {
-                SwitchTo(Mode.Away, "閒置 " + config.IdleMinutes + " 分鐘，已自動切換成省電模式。");
+                ModeConfig away = config.FindMode(config.AwayModeId)!;
+                SwitchTo(away, manual: false, "閒置 " + config.IdleMinutes + " 分鐘，已自動切換到「" + away.Name + "」。");
             }
         }
 
-        // 只在「自動切換 + 省電模式」時掛滑鼠鉤子，遊玩模式完全不掛
+        // 只在「自動切換開 + 處於『省電』模式 + 舊版切換條件作用中」時掛滑鼠鉤子，其他模式完全不掛
         void ApplyHookPolicy()
         {
-            bool need = config.AutoSwitch && CurrentMode == Mode.Away && !IsSwitching;
+            bool need = config.AutoSwitch && LegacySwitchActive && !IsSwitching
+                && config.LegacyRoleOf(config.CurrentModeId) == Mode.Away;
             signals.ApplyHookPolicy(new MouseHookPolicy(need, ignoreUntilMs, config.MouseMoveThreshold, config.IgnoreRemoteInput));
         }
 
@@ -147,62 +172,102 @@ namespace AutoDisplayMode.Core
         //  切換模式
         // ------------------------------------------------------------
 
-        void SwitchTo(Mode target, string? notifyText)
+        /// <summary>手動切換到模式 <paramref name="modeId"/>（可以是目前模式：重新套用）。</summary>
+        public void ManualSwitch(int modeId)
+        {
+            if (IsSwitching)
+            {
+                notifier.Notify(BusyText, NotificationKind.Info);
+                return;
+            }
+            ModeConfig? mode = config.FindMode(modeId);
+            if (mode != null) SwitchTo(mode, manual: true, null);
+        }
+
+        /// <summary>
+        /// 依目前接上的螢幕規劃並開始套用 <paramref name="target"/>。偵測失敗或規劃被拒絕時不切換、
+        /// 通知並暫停自動切換。目前模式在套用成功（<see cref="OnSwitchFinished"/>）後才改變。
+        /// </summary>
+        void SwitchTo(ModeConfig target, bool manual, string? autoNotifyText)
         {
             long now = clock.NowMs;
 
-            if (!switcher.IsReady(config))
+            IReadOnlyList<DetectedMonitor> detected;
+            try
             {
-                ignoreUntilMs = now + NotReadyPauseMs;
-                ApplyHookPolicy();
-                notifier.Notify("找不到 bat 檔：\n" + config.BatPath + "\n請關閉程式後修改 AutoDisplayMode.cfg 的 BatPath。",
-                    NotificationKind.Warning);
+                detected = monitors.Detect();
+            }
+            catch (Exception ex)
+            {
+                Abort("無法偵測螢幕，未切換到「" + target.Name + "」：\n" + ex.Message, NotificationKind.Error);
                 return;
             }
 
-            CurrentMode = target;
-            config.LastMode = target;
-            Save();
+            ApplyPlan plan = ApplyPlanner.Plan(target, detected);
+            if (plan.States == null)
+            {
+                Abort(plan.Rejection!, NotificationKind.Warning);
+                return;
+            }
 
-            IsSwitching = true;
-            signals.ResetMouseTracking();
-            audioStreak = 0;
-            lastUsageMs = now;
+            pending = new PendingSwitch(target.Id, target.Name, manual, autoNotifyText);
+
+            ResetShortTermTracking();
             ignoreUntilMs = now + SwitchingGraceMs;
             ApplyHookPolicy();
             OnChanged();
 
-            if (notifyText != null && config.ShowNotifications)
-                notifier.Notify(notifyText, NotificationKind.Info);
-
-            switcher.Begin(target, config);
+            monitors.BeginApply(plan.States);
         }
 
-        /// <summary>轉接層在切換結束時呼叫；<paramref name="error"/> 為 null 表示成功。</summary>
-        public void OnSwitchFinished(string? error)
+        /// <summary>
+        /// 切換沒有開始：通知並暫停自動切換 1 分鐘。閒置計時不歸零，暫停結束後條件仍成立就再試一次。
+        /// </summary>
+        void Abort(string message, NotificationKind kind)
         {
             long now = clock.NowMs;
-            IsSwitching = false;
-            ignoreUntilMs = now + AfterSwitchGraceMs;
-            ResetUsageTracking(now);
-            signals.RequestAudioRefresh();
+            ignoreUntilMs = Math.Max(ignoreUntilMs, now + FailurePauseMs);
+            ResetShortTermTracking();
             ApplyHookPolicy();
+            notifier.Notify(message, kind);
             OnChanged();
-
-            if (error != null) notifier.Notify(error, NotificationKind.Error);
         }
 
-        /// <summary>手動切換到 <paramref name="target"/>，並把自動切換設為 <paramref name="autoSwitch"/>。</summary>
-        public void ManualSwitch(Mode target, bool autoSwitch)
+        /// <summary>
+        /// 轉接層在套用結束時呼叫；<paramref name="error"/> 為 null 表示成功。
+        /// 成功：目前模式改為目標模式（手動切換時依目標模式的設定調整自動切換）並存檔。
+        /// 失敗：維持原本的模式、跳出錯誤通知、自動切換暫停 1 分鐘。
+        /// </summary>
+        public void OnSwitchFinished(string? error)
         {
-            if (IsSwitching)
+            if (pending is not PendingSwitch done) return;
+            long now = clock.NowMs;
+            pending = null;
+
+            if (error == null)
             {
-                notifier.Notify("正在切換中，請稍候。", NotificationKind.Info);
-                return;
+                ModeConfig? target = config.FindMode(done.ModeId);   // 切換期間重新載入 cfg 可能刪掉了這個模式
+                if (target != null)
+                {
+                    config.CurrentModeId = target.Id;
+                    if (done.Manual && target.ManualAutoSwitch != ManualAutoSwitch.Keep)
+                        config.AutoSwitch = target.ManualAutoSwitch == ManualAutoSwitch.On;
+                    Save();
+                }
+                ignoreUntilMs = now + AfterSwitchGraceMs;
+                ResetUsageTracking(now);
+                if (done.NotifyText != null && config.ShowNotifications) notifier.Notify(done.NotifyText, NotificationKind.Info);
             }
-            config.AutoSwitch = autoSwitch;
-            Save();
-            SwitchTo(target, null);
+            else
+            {
+                // 閒置計時不歸零：暫停結束後條件仍成立就再試一次
+                ignoreUntilMs = now + FailurePauseMs;
+                ResetShortTermTracking();
+                notifier.Notify("無法切換到「" + done.ModeName + "」，維持原本的模式：\n" + error, NotificationKind.Error);
+            }
+
+            signals.RequestAudioRefresh();
+            ApplyHookPolicy();
             OnChanged();
         }
 
@@ -232,9 +297,16 @@ namespace AutoDisplayMode.Core
             OnChanged();
         }
 
+        /// <summary>閒置計時歸零，並清除短期的使用跡象。</summary>
         void ResetUsageTracking(long now)
         {
             lastUsageMs = now;
+            ResetShortTermTracking();
+        }
+
+        /// <summary>清除累積的滑鼠使用、聲音持續秒數與最後輸入時間的比較基準（閒置計時不變）。</summary>
+        void ResetShortTermTracking()
+        {
             signals.ResetMouseTracking();
             audioStreak = 0;
             lastInputTick = signals.LastInputTick;
@@ -263,15 +335,12 @@ namespace AutoDisplayMode.Core
         //  擷取
         // ------------------------------------------------------------
 
-        /// <summary>目前模式的名稱。</summary>
-        public string CurrentModeName => config.CurrentModeConfig?.Name ?? "";
-
         /// <summary>把目前實際的螢幕狀態擷取進目前模式並存檔（確認視窗由介面層負責）。</summary>
         public void CaptureToCurrentMode()
         {
             if (IsSwitching)
             {
-                notifier.Notify("正在切換中，請稍候。", NotificationKind.Info);
+                notifier.Notify(BusyText, NotificationKind.Info);
                 return;
             }
 
@@ -302,26 +371,21 @@ namespace AutoDisplayMode.Core
         //  設定檔
         // ------------------------------------------------------------
 
-        /// <summary>重新讀取 cfg。目前實際的螢幕狀態以程式記錄為準，不因重新載入而切換。</summary>
+        /// <summary>
+        /// 重新讀取 cfg。目前實際的螢幕狀態以程式記錄為準：程式記錄的目前模式仍存在時維持不變，不因重新載入而切換。
+        /// </summary>
         public void ReloadConfig()
         {
+            int current = config.CurrentModeId;
             config = LoadConfig();
-            config.LastMode = CurrentMode;
+            if (config.FindMode(current) != null) config.CurrentModeId = current;
 
             ResetUsageTracking(clock.NowMs);
             signals.RequestAudioRefresh();
             ApplyHookPolicy();
             OnChanged();
 
-            string msg = "已重新載入設定檔。\n" + TakeLoadNote() + StatusSummary;
-            if (switcher.IsReady(config))
-            {
-                notifier.Notify(msg, NotificationKind.Info);
-            }
-            else
-            {
-                notifier.Notify(msg + "\n注意：找不到 bat 檔，請檢查 BatPath。", NotificationKind.Warning);
-            }
+            notifier.Notify("已重新載入設定檔。\n" + TakeLoadNote() + StatusSummary, NotificationKind.Info);
         }
 
         /// <summary>使用者要以文字編輯器開啟 cfg 前呼叫：cfg 不存在就先以目前設定建立。</summary>
@@ -340,24 +404,20 @@ namespace AutoDisplayMode.Core
         {
             writesBlocked = false;
             AppConfig c;
+            bool save = true;
 
             if (!TryRead(out string? text))
             {
                 writesBlocked = true;
                 c = new AppConfig();
                 AddDefaultMode(c, DetectForNewMode());
-                return c;
             }
-
-            if (text == null || text.Trim().Length == 0)
+            else if (text == null || text.Trim().Length == 0)
             {
                 c = new AppConfig { StartWithWindows = startup.IsEnabled };
                 AddDefaultMode(c, DetectForNewMode());
-                Save(c);
-                return c;
             }
-
-            if (ConfigFile.IsLegacy(text))
+            else if (ConfigFile.IsLegacy(text))
             {
                 try
                 {
@@ -373,16 +433,16 @@ namespace AutoDisplayMode.Core
                 c = ConfigFile.MigrateLegacy(text);
                 c.StartWithWindows = startup.IsEnabled;   // 舊版的開機啟動狀態只存在登錄檔
                 AddDefaultMode(c, DetectForNewMode());
-                Save(c);
-                return c;
+            }
+            else
+            {
+                c = ConfigFile.Parse(text);
+                save = c.Modes.Count == 0;
+                if (save) AddDefaultMode(c, DetectForNewMode());
             }
 
-            c = ConfigFile.Parse(text);
-            if (c.Modes.Count == 0)
-            {
-                AddDefaultMode(c, DetectForNewMode());
-                Save(c);
-            }
+            ConfigFile.ResolveLegacyRoles(c);
+            if (save) Save(c);
             return c;
         }
 
@@ -406,6 +466,7 @@ namespace AutoDisplayMode.Core
             var mode = new ModeConfig(id, DefaultModeName);
             mode.Monitors.AddRange(Capture.Run(detected, Array.Empty<MonitorSettings>()));
             c.Modes.Add(mode);
+            ModeConfig.AssignMissingColors(c.Modes);
             c.CurrentModeId = id;
             return mode;
         }

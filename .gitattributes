@@ -1,0 +1,5 @@
+# 簽好的驅動檔不能被換行轉換改動，否則 .cat 的雜湊對不上
+drivers/sudovda/x64/** -text
+drivers/sudovda/*.cer -text
+# bash 腳本一律 LF
+*.sh text eol=lf

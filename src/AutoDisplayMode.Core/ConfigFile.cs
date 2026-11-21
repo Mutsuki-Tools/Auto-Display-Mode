@@ -114,7 +114,7 @@ namespace AutoDisplayMode.Core
                 }
                 else if (TryParseModeSection(name, out modeId))
                 {
-                    if (c.Modes.Exists(m => m.Id == modeId)) continue;   // 重複的模式 ID：只認第一個
+                    if (c.Modes.Exists(m => m.Id == modeId)) continue;   // 重複的模式編號：只認第一個
                     c.Modes.Add(ReadMode(modeId, values));
                 }
             }
@@ -170,7 +170,7 @@ namespace AutoDisplayMode.Core
 
         /// <summary>
         /// 把舊版的兩條切換條件轉成等效的切換條件，維持原本的行為：
-        /// HomeMode 閒置 IdleMinutes 分鐘（滑鼠或鍵盤＋聲音）→ AwayMode；AwayMode 偵測到使用（滑鼠或鍵盤＋聲音）→ HomeMode。
+        /// HomeMode 閒置 IdleMinutes 分鐘（鍵盤滑鼠＋聲音）→ AwayMode；AwayMode 偵測到使用（鍵盤滑鼠＋聲音）→ HomeMode。
         /// AudioDetect=0 時兩條都不選聲音。HomeMode／AwayMode 沒有指向兩個不同且存在的模式時不轉換。
         /// </summary>
         static List<SwitchCondition> ConvertLegacySwitch(AppConfig c, LegacySwitch legacy)
@@ -194,7 +194,7 @@ namespace AutoDisplayMode.Core
         }
 
         /// <summary>
-        /// 讀取一條切換條件。沒寫的鍵用預設值（閒置 10 分鐘、只選滑鼠或鍵盤）；
+        /// 讀取一條切換條件。沒寫的鍵用預設值（閒置 10 分鐘、只選鍵盤滑鼠）；
         /// Condition 寫了無法辨識的值時 <paramref name="error"/> 為原因（不默默當成閒置），否則為 null。
         /// </summary>
         static SwitchCondition ReadCondition(List<(string Key, string Value)> values, out string? error)
@@ -365,7 +365,7 @@ namespace AutoDisplayMode.Core
                 Line("# ============================================================");
             }
 
-            Line("# 省電螢幕工具 設定檔");
+            Line("# Auto Display Mode 設定檔");
             Line("# 本檔由程式整份重寫。手動修改並存檔後，請從右鍵選單選「重新載入 cfg」才會生效；");
             Line("# 程式存檔時會依格式重新產生整份內容與註解，自行加入的註解不會保留。");
             Line();
@@ -382,7 +382,7 @@ namespace AutoDisplayMode.Core
             Line("AudioThreshold=" + c.AudioThreshold.ToString("R", CultureInfo.InvariantCulture));
             Line("# 聲音要連續播放幾秒才算一次使用（1~3600，過濾通知音這類短暫聲音）");
             Line("AudioSeconds=" + Int(c.AudioSeconds));
-            Line("# 1 = 忽略遠端連線軟體送出的滑鼠或鍵盤輸入，避免遠端操作時被當成使用");
+            Line("# 1 = 忽略遠端連線軟體送出的鍵盤滑鼠輸入，避免遠端操作時被當成使用");
             Line("IgnoreRemoteInput=" + Bool(c.IgnoreRemoteInput));
             Line("# 自動切換時是否跳出通知（1=是，0=否）");
             Line("ShowNotifications=" + Bool(c.ShowNotifications));
@@ -397,7 +397,7 @@ namespace AutoDisplayMode.Core
             Line("#   Condition      Idle（閒置）或 UsageDetected（偵測到使用）");
             Line("#   IdleTime       閒置多久（正整數，只用於 Idle）");
             Line("#   IdleUnit       Minutes（分鐘）或 Hours（小時）（只用於 Idle）");
-            Line("#   MouseKeyboard  使用來源「滑鼠或鍵盤」（1=選，0=不選）");
+            Line("#   MouseKeyboard  使用來源「鍵盤滑鼠」（1=選，0=不選）");
             Line("#   Audio          使用來源「聲音」（1=選，0=不選；聲音要持續 AudioSeconds 秒才算使用）");
             Line("#   To             目標模式（填 [Mode.N] 的 N，不可與來源模式相同）");
             Line("# 閒置：所選的使用來源全部都沒有使用，持續 IdleTime。偵測到使用：所選的使用來源任一個出現使用就成立。");
@@ -434,7 +434,7 @@ namespace AutoDisplayMode.Core
                 Line();
                 Line("# ------------------------------------------------------------");
                 Line("#  模式與螢幕設定");
-                Line("#  [Mode.N] 是一個模式，N 為模式的 ID（不會因改名而變）：");
+                Line("#  [Mode.N] 是一個模式，N 為模式的編號，依模式的順序（改名不變；在設定視窗調整順序或刪除模式並套用後重新編號）：");
                 Line("#    Name              模式名稱");
                 Line("#    Color             工作列圖示顏色（#RRGGBB）");
                 Line("#    ManualAutoSwitch  手動切換進入此模式時，自動切換要 Keep（維持）、On（開啟）或 Off（關閉）");

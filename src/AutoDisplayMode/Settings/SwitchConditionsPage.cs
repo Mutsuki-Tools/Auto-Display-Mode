@@ -46,7 +46,7 @@ namespace AutoDisplayMode.Settings
             var unitColumn = ChoiceColumn("單位", 55,
                 new Choice((int)IdleUnit.Minutes, "分鐘"),
                 new Choice((int)IdleUnit.Hours, "小時"));
-            var mouseColumn = new DataGridViewCheckBoxColumn { HeaderText = "滑鼠或鍵盤", FillWeight = 88 };
+            var mouseColumn = new DataGridViewCheckBoxColumn { HeaderText = "鍵盤滑鼠", FillWeight = 88 };
             var audioColumn = new DataGridViewCheckBoxColumn { HeaderText = "聲音", FillWeight = 45 };
 
             grid = new DataGridView

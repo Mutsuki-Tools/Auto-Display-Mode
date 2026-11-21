@@ -42,7 +42,7 @@ namespace AutoDisplayMode.Core.Tests
         }
 
         [Fact]
-        public void 閒置只選滑鼠或鍵盤時持續播放聲音不影響閒置計時()
+        public void 閒置只選鍵盤滑鼠時持續播放聲音不影響閒置計時()
         {
             var h = Modes(Play, Sw.Idle(Play, Save, 5, Sw.MouseOrKeyboard));
             h.Signals.AudioPeak = 0.5f;
@@ -51,7 +51,7 @@ namespace AutoDisplayMode.Core.Tests
         }
 
         [Fact]
-        public void 閒置只選聲音時滑鼠或鍵盤輸入不影響閒置計時()
+        public void 閒置只選聲音時鍵盤滑鼠輸入不影響閒置計時()
         {
             var h = Modes(Play, Sw.Idle(Play, Save, 5, Sw.Audio));
 
@@ -112,7 +112,7 @@ namespace AutoDisplayMode.Core.Tests
         }
 
         [Fact]
-        public void 偵測到使用_鍵盤輸入也算滑鼠或鍵盤的使用()
+        public void 偵測到使用_鍵盤輸入也算鍵盤滑鼠的使用()
         {
             var h = Modes(Save, Sw.Usage(Save, Play));
             h.Run(10);
@@ -136,7 +136,7 @@ namespace AutoDisplayMode.Core.Tests
         }
 
         [Fact]
-        public void 偵測到使用_只選滑鼠或鍵盤時聲音不算使用()
+        public void 偵測到使用_只選鍵盤滑鼠時聲音不算使用()
         {
             var h = Modes(Save, Sw.Usage(Save, Play, Sw.MouseOrKeyboard));
             h.Run(10);
@@ -148,7 +148,7 @@ namespace AutoDisplayMode.Core.Tests
         }
 
         [Fact]
-        public void 偵測到使用_只選聲音時滑鼠或鍵盤不算使用()
+        public void 偵測到使用_只選聲音時鍵盤滑鼠不算使用()
         {
             var h = Modes(Save, Sw.Usage(Save, Play, Sw.Audio));
             h.Run(10);
@@ -301,7 +301,7 @@ namespace AutoDisplayMode.Core.Tests
             h.Signals.AudioPeak = 0.5f;
             h.Run(60);
             h.Signals.AudioPeak = 0f;
-            Assert.Equal(4 * 60, h.RunUntilSwitch(10 * 60));   // 只看滑鼠或鍵盤：聲音不影響
+            Assert.Equal(4 * 60, h.RunUntilSwitch(10 * 60));   // 只看鍵盤滑鼠：聲音不影響
             h.FinishSwitch();
 
             // 聲音在切換前 4 分鐘就停了；若沒歸零，緩衝期一結束就會切換
@@ -346,7 +346,7 @@ namespace AutoDisplayMode.Core.Tests
         }
 
         [Fact]
-        public void 進入有偵測到使用加滑鼠或鍵盤條件的模式時安裝鉤子_離開時移除()
+        public void 進入有偵測到使用加鍵盤滑鼠條件的模式時安裝鉤子_離開時移除()
         {
             var h = PlayAndSave(Play);
             h.Run(1);

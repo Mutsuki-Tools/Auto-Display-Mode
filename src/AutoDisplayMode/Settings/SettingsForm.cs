@@ -16,6 +16,7 @@ namespace AutoDisplayMode.Settings
         readonly ModesPage modesPage;   // 套用時提供在視窗中擷取的模式
         readonly Button applyButton;
         readonly AppConfig draft;
+        readonly TabControl tabs;
 
         public SettingsForm(AppCoordinator app, Icon icon, string appTitle)
         {
@@ -45,7 +46,7 @@ namespace AutoDisplayMode.Settings
             modesPage = new ModesPage(app);
             pages = new SettingsPage[] { modesPage, new LayoutPage(app), new SwitchConditionsPage(app), new GeneralPage() };
 
-            var tabs = new TabControl { Dock = DockStyle.Fill };
+            tabs = new TabControl { Dock = DockStyle.Fill };
             foreach (SettingsPage page in pages)
             {
                 page.Load(draft);
@@ -89,6 +90,8 @@ namespace AutoDisplayMode.Settings
             }
             applyButton.Enabled = false;
             foreach (SettingsPage page in pages) page.OnApplied();
+            // 套用後模式依順序重新編號（副本也一樣）：重新顯示目前的分頁，其他分頁切換過去時會重新顯示
+            (tabs.SelectedTab as SettingsPage)?.Load(draft);
             return true;
         }
 

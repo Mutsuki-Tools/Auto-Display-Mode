@@ -33,7 +33,7 @@ namespace AutoDisplayMode.Core.Tests
                 },
             }, mode.Monitors);
 
-            Assert.StartsWith("# 省電螢幕工具 設定檔\r\n", h.Store.Text);
+            Assert.StartsWith("# Auto Display Mode 設定檔\r\n", h.Store.Text);
             Assert.Contains("[General]\r\n", h.Store.Text);
             Assert.Contains("Name=預設\r\n", h.Store.Text);
             Assert.Contains("Monitor=DEL/A0F4/SN:SN-B\r\n", h.Store.Text);

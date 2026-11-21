@@ -28,7 +28,7 @@ namespace AutoDisplayMode.Core
     {
         None = 0,
 
-        /// <summary>滑鼠或鍵盤。</summary>
+        /// <summary>鍵盤滑鼠。</summary>
         MouseKeyboard = 1,
 
         /// <summary>聲音（需持續達聲音持續秒數且超過音量門檻才算一次使用）。</summary>
@@ -76,7 +76,7 @@ namespace AutoDisplayMode.Core
             return null;
         }
 
-        /// <summary>給人看的描述，例如「遊玩」閒置 5 分鐘（滑鼠或鍵盤、聲音）→「省電」。</summary>
+        /// <summary>給人看的描述，例如「遊玩」閒置 5 分鐘（鍵盤滑鼠、聲音）→「省電」。</summary>
         public string Describe(AppConfig config) =>
             "「" + ModeName(config, FromModeId) + "」" + DescribeCondition() + "（" + DescribeSources() + "）→「" + ModeName(config, ToModeId) + "」";
 
@@ -89,7 +89,7 @@ namespace AutoDisplayMode.Core
         string DescribeSources()
         {
             var parts = new List<string>();
-            if (Uses(UsageSources.MouseKeyboard)) parts.Add("滑鼠或鍵盤");
+            if (Uses(UsageSources.MouseKeyboard)) parts.Add("鍵盤滑鼠");
             if (Uses(UsageSources.Audio)) parts.Add("聲音");
             return parts.Count == 0 ? "未選使用來源" : string.Join("、", parts);
         }

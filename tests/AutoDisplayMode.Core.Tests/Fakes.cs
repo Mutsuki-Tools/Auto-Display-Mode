@@ -151,7 +151,7 @@ namespace AutoDisplayMode.Core.Tests
     /// <summary>手寫 cfg 中一條切換條件（Switch）的內容（不含分段標題；由 <see cref="Harness.Modes"/> 編號）。</summary>
     static class Sw
     {
-        /// <summary>使用來源「滑鼠或鍵盤」。</summary>
+        /// <summary>使用來源「鍵盤滑鼠」。</summary>
         public const UsageSources MouseOrKeyboard = UsageSources.MouseKeyboard;
         /// <summary>使用來源「聲音」。</summary>
         public const UsageSources Audio = UsageSources.Audio;
@@ -279,8 +279,8 @@ namespace AutoDisplayMode.Core.Tests
         }
 
         /// <summary>
-        /// <see cref="Modes"/> 加上與舊版相同的兩條切換條件：「遊玩」閒置 5 分鐘（滑鼠或鍵盤、聲音）→「省電」；
-        /// 「省電」偵測到使用（滑鼠或鍵盤、聲音）→「遊玩」。
+        /// <see cref="Modes"/> 加上與舊版相同的兩條切換條件：「遊玩」閒置 5 分鐘（鍵盤滑鼠、聲音）→「省電」；
+        /// 「省電」偵測到使用（鍵盤滑鼠、聲音）→「遊玩」。
         /// </summary>
         public static Harness PlayAndSave(int current, params string[] extra) =>
             Modes(current, extra.Concat(new[]

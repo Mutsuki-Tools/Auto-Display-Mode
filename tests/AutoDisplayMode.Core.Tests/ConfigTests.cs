@@ -140,7 +140,7 @@ namespace AutoDisplayMode.Core.Tests
 
             h.App.SetAutoSwitch(true);
 
-            Assert.StartsWith("# 省電螢幕工具 設定檔\r\n", h.Store.Text);
+            Assert.StartsWith("# Auto Display Mode 設定檔\r\n", h.Store.Text);
             Assert.Contains("# 自動切換總開關（1=開，0=關）\r\nAutoSwitch=1\r\n", h.Store.Text);
             Assert.Contains("#  模式「遊玩」\r\n", h.Store.Text);
             Assert.Contains("[Mode.3.Monitor.2]\r\nMonitor=GSM/5B7F/PORT:HDMI1\r\n", h.Store.Text);
@@ -148,7 +148,7 @@ namespace AutoDisplayMode.Core.Tests
                 "# 切換條件 1：「遊玩」閒置 2 小時（聲音）→「省電」\r\n[Switch.1]\r\nFrom=3\r\nCondition=Idle\r\n" +
                 "IdleTime=2\r\nIdleUnit=Hours\r\nMouseKeyboard=0\r\nAudio=1\r\nTo=7\r\n", h.Store.Text);
             Assert.Contains(   // 偵測到使用不寫閒置時間
-                "# 切換條件 2：「省電」偵測到使用（滑鼠或鍵盤、聲音）→「遊玩」\r\n[Switch.2]\r\nFrom=7\r\nCondition=UsageDetected\r\n" +
+                "# 切換條件 2：「省電」偵測到使用（鍵盤滑鼠、聲音）→「遊玩」\r\n[Switch.2]\r\nFrom=7\r\nCondition=UsageDetected\r\n" +
                 "MouseKeyboard=1\r\nAudio=1\r\nTo=3\r\n", h.Store.Text);
             Assert.DoesNotContain("# 使用者的註解", h.Store.Text);
         }
@@ -502,8 +502,8 @@ namespace AutoDisplayMode.Core.Tests
                 Harness.Cfg("[Switch.3]") + Sw.Idle(2, 3, 1, Sw.MouseOrKeyboard, IdleUnit.Hours) +
                 Harness.Cfg("[Mode.1]", "Name=甲", "[Mode.2]", "Name=乙", "[Mode.3]", "Name=丙"));
 
-            Assert.Equal(("省電螢幕工具已啟動。\n目前：乙｜自動切換：關\n" +   // 只列出從目前模式出發的切換條件
-                          "「乙」偵測到使用（滑鼠或鍵盤、聲音）→「甲」\n「乙」閒置 1 小時（滑鼠或鍵盤）→「丙」",
+            Assert.Equal(("Auto Display Mode 已啟動。\n目前：乙｜自動切換：關\n" +   // 只列出從目前模式出發的切換條件
+                          "「乙」偵測到使用（鍵盤滑鼠、聲音）→「甲」\n「乙」閒置 1 小時（鍵盤滑鼠）→「丙」",
                     NotificationKind.Info),
                 Assert.Single(h.Notifier.Shown));
         }
@@ -513,7 +513,7 @@ namespace AutoDisplayMode.Core.Tests
         {
             var h = new Harness(Harness.Cfg("[General]", "AutoSwitch=1", "[Mode.1]", "Name=預設"));
 
-            Assert.Equal("省電螢幕工具已啟動。\n目前：預設｜自動切換：開\n沒有從「預設」出發的切換條件",
+            Assert.Equal("Auto Display Mode 已啟動。\n目前：預設｜自動切換：開\n沒有從「預設」出發的切換條件",
                 Assert.Single(h.Notifier.Shown).Text);
         }
 

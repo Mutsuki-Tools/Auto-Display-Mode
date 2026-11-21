@@ -35,7 +35,7 @@ namespace AutoDisplayMode.Core
         readonly INotifier notifier;
 
         AppConfig config;
-        long lastInputUsageMs;   // 最後一次「滑鼠或鍵盤」使用的時間（閒置用：Windows 最後輸入時間改變）
+        long lastInputUsageMs;   // 最後一次「鍵盤滑鼠」使用的時間（閒置用：Windows 最後輸入時間改變）
         long lastAudioUsageMs;   // 最後一次「聲音」使用的時間（聲音持續達門檻秒數）
         long ignoreUntilMs;      // 在這個時間之前不做自動切換（切換螢幕後的緩衝、失敗後的暫停）
         int audioStreak;         // 連續偵測到聲音的秒數
@@ -141,7 +141,7 @@ namespace AutoDisplayMode.Core
             ignoreUntilMs = now + StartupGraceMs;
             ResetUsageTracking(now);
             SyncStartupIntoLoadNote();
-            notifier.Notify("省電螢幕工具已啟動。\n" + TakeLoadNote() + StatusSummary, NotificationKind.Info);
+            notifier.Notify("Auto Display Mode 已啟動。\n" + TakeLoadNote() + StatusSummary, NotificationKind.Info);
         }
 
         /// <summary>
@@ -157,7 +157,7 @@ namespace AutoDisplayMode.Core
             bool audioUsage = audioStreak > config.AudioSeconds;
             if (audioUsage) lastAudioUsageMs = now;
 
-            // 滑鼠或鍵盤（閒置用）：Windows 最後輸入時間，不需鉤子
+            // 鍵盤滑鼠（閒置用）：Windows 最後輸入時間，不需鉤子
             uint t = signals.LastInputTick;
             if (t != lastInputTick)
             {
@@ -165,7 +165,7 @@ namespace AutoDisplayMode.Core
                 lastInputUsageMs = now;
             }
 
-            // 滑鼠或鍵盤（偵測到使用用）：鉤子（經移動門檻與遠端過濾），只在需要時安裝
+            // 鍵盤滑鼠（偵測到使用用）：鉤子（經移動門檻與遠端過濾），只在需要時安裝
             bool hookUsage = signals.TakeHookUsage();
 
             ApplyHookPolicy();
@@ -198,7 +198,7 @@ namespace AutoDisplayMode.Core
         }
 
         /// <summary>
-        /// 只在「自動切換開 + 沒有在切換 + 設定視窗沒開 + 目前模式是某條『偵測到使用 + 滑鼠或鍵盤』切換條件的來源模式」時
+        /// 只在「自動切換開 + 沒有在切換 + 設定視窗沒開 + 目前模式是某條『偵測到使用 + 鍵盤滑鼠』切換條件的來源模式」時
         /// 安裝滑鼠與鍵盤鉤子，其他情況完全不掛（不影響遊戲的輸入延遲）。
         /// </summary>
         void ApplyHookPolicy()
@@ -450,6 +450,7 @@ namespace AutoDisplayMode.Core
         /// <summary>
         /// 套用設定視窗暫存的設定（<see cref="AppConfig.Clone"/> 出來修改的複本）：寫入 cfg 並立即生效。
         /// 成功時回傳 null；失敗時回傳原因，設定維持不變。
+        /// 成功時模式依順序重新編號為 1、2、3…，切換條件與目前模式跟著改，<paramref name="edited"/> 也一樣重新編號。
         /// </summary>
         /// <param name="capturedModeId">
         /// 在設定視窗中最後一次擷取（<see cref="CaptureForSettings"/>）存入的模式；套用後它成為目前模式並重新計時。
@@ -472,7 +473,9 @@ namespace AutoDisplayMode.Core
             foreach (ModeConfig m in next.Modes) m.Name = m.Name.Trim();
             next.CurrentModeId = current;
             next.AutoSwitch = config.AutoSwitch;
+            next.RenumberModes();   // cfg 的 [Mode.N] 依模式的順序編號
             if (!Save(next)) return "無法寫入設定檔：\n" + store.Location;
+            edited.RenumberModes();   // 副本也一樣重新編號：設定視窗繼續編輯、再次套用時與目前的設定一致
 
             bool startupChanged = next.StartWithWindows != config.StartWithWindows;
             config = next;

@@ -89,6 +89,20 @@ namespace AutoDisplayMode.Settings
         /// <summary>介面上顯示的模式名稱：去掉前後空白，空白時顯示「（未命名）」。</summary>
         protected static string DisplayName(ModeConfig m) => m.Name.Trim().Length > 0 ? m.Name.Trim() : "（未命名）";
 
+        /// <summary>
+        /// 數字欄位：Margin 不隨 DPI 縮放。NumericUpDown 本身是 ContainerControl，設定視窗依 DPI 縮放時它的 Margin
+        /// 會被重複放大（144 DPI 時 3 像素變成數十像素，列高被撐開），大小則只縮放一次、不受影響。
+        /// </summary>
+        protected sealed class NumberBox : NumericUpDown
+        {
+            protected override void ScaleControl(SizeF factor, BoundsSpecified specified)
+            {
+                Padding margin = Margin;
+                base.ScaleControl(factor, specified);
+                Margin = margin;
+            }
+        }
+
         /// <summary>灰色的說明文字。</summary>
         protected static Label Hint(string text) => new()
         {

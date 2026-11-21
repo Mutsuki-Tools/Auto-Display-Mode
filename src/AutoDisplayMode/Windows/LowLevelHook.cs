@@ -3,7 +3,7 @@ using System.Runtime.InteropServices;
 
 namespace AutoDisplayMode.Windows
 {
-    /// <summary>低階滑鼠或鍵盤鉤子（只在核心要求時掛上）。</summary>
+    /// <summary>低階滑鼠鉤子或低階鍵盤鉤子（每個執行個體只掛其中一種；只在核心要求時掛上）。</summary>
     sealed class LowLevelHook
     {
         /// <summary>收到一筆輸入：視窗訊息（WM_MOUSEMOVE、WM_KEYDOWN 等）與 MSLLHOOKSTRUCT／KBDLLHOOKSTRUCT 的指標。</summary>

@@ -12,7 +12,7 @@ namespace AutoDisplayMode.Core
         /// <summary>自動切換。</summary>
         public bool AutoSwitch { get; set; } = true;
 
-        /// <summary>目前模式的 ID。</summary>
+        /// <summary>目前模式的模式編號。</summary>
         public int CurrentModeId { get; set; }
 
         // 一般設定的範圍：設定視窗的欄位與讀取 cfg 時的正規化共用
@@ -44,7 +44,7 @@ namespace AutoDisplayMode.Core
 
         public ModeConfig? FindMode(int id) => Modes.Find(m => m.Id == id);
 
-        /// <summary>新模式的 ID：目前最大的 ID + 1（沒有模式時為 1）。</summary>
+        /// <summary>新模式的編號：目前最大的編號 + 1（沒有模式時為 1）。</summary>
         public int NextModeId() => Modes.Count == 0 ? 1 : Modes.Max(m => m.Id) + 1;
 
         /// <summary>新增一個沒有螢幕設定的模式（名稱不重複、配一個未使用的顏色），回傳新模式。</summary>
@@ -57,7 +57,7 @@ namespace AutoDisplayMode.Core
         }
 
         /// <summary>
-        /// 複製模式 <paramref name="modeId"/>：新的 ID、名稱與未使用的顏色，其餘設定與螢幕設定相同（清單各自獨立）。
+        /// 複製模式 <paramref name="modeId"/>：新的編號、名稱與未使用的顏色，其餘設定與螢幕設定相同（清單各自獨立）。
         /// 切換條件不複製。回傳新模式。
         /// </summary>
         public ModeConfig DuplicateMode(int modeId)
@@ -117,6 +117,35 @@ namespace AutoDisplayMode.Core
             return removed;
         }
 
+        /// <summary>
+        /// 把第 <paramref name="fromIndex"/> 個模式移到第 <paramref name="toIndex"/> 個位置（皆從 0 起算），改變模式的順序
+        /// （工作列選單與 cfg 的順序）。編號在套用時才依新順序重新編排。
+        /// </summary>
+        public void MoveMode(int fromIndex, int toIndex)
+        {
+            ModeConfig m = Modes[fromIndex];
+            Modes.RemoveAt(fromIndex);
+            Modes.Insert(toIndex, m);
+        }
+
+        /// <summary>
+        /// 依清單順序把模式重新編號為 1、2、3…（cfg 的 [Mode.N] 跟著順序），切換條件的來源與目標模式、目前模式跟著改。
+        /// </summary>
+        internal void RenumberModes()
+        {
+            var map = new Dictionary<int, int>();
+            for (int i = 0; i < Modes.Count; i++) map[Modes[i].Id] = i + 1;
+            int New(int id) => map.TryGetValue(id, out int n) ? n : id;
+
+            foreach (ModeConfig m in Modes) m.Id = New(m.Id);
+            for (int i = 0; i < SwitchConditions.Count; i++)
+            {
+                SwitchCondition s = SwitchConditions[i];
+                SwitchConditions[i] = s with { FromModeId = New(s.FromModeId), ToModeId = New(s.ToModeId) };
+            }
+            CurrentModeId = New(CurrentModeId);
+        }
+
         // ---- 切換條件 ----
 
         /// <summary>所有切換條件（依表格順序：同一來源模式的條件由上往下檢查，第一條成立的就執行）。</summary>
@@ -128,7 +157,7 @@ namespace AutoDisplayMode.Core
 
         /// <summary>
         /// 在最後新增一條來源模式為 <paramref name="fromModeId"/>（不存在時用第一個模式）、目標模式為另一個模式的切換條件，
-        /// 條件為預設的閒置 10 分鐘（滑鼠或鍵盤）。回傳新的切換條件。先以 <see cref="SwitchConditionAddBlocker"/> 確認可以新增。
+        /// 條件為預設的閒置 10 分鐘（鍵盤滑鼠）。回傳新的切換條件。先以 <see cref="SwitchConditionAddBlocker"/> 確認可以新增。
         /// </summary>
         public SwitchCondition AddSwitchCondition(int fromModeId)
         {

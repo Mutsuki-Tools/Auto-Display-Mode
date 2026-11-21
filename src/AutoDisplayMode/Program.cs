@@ -15,8 +15,8 @@ namespace AutoDisplayMode
             using var mutex = new Mutex(true, "AutoDisplayMode_SingleInstance", out bool createdNew);
             if (!createdNew)
             {
-                MessageBox.Show("省電螢幕工具已經在執行中，請到工作列右下角的圖示操作。",
-                    "省電螢幕工具", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                MessageBox.Show("Auto Display Mode 已經在執行中，請到工作列右下角的圖示操作。",
+                    "Auto Display Mode", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
 
@@ -24,7 +24,7 @@ namespace AutoDisplayMode
             Application.SetCompatibleTextRenderingDefault(false);
             Application.ThreadException += (_, e) =>
             {
-                MessageBox.Show("發生錯誤：\n" + e.Exception.Message, "省電螢幕工具",
+                MessageBox.Show("發生錯誤：\n" + e.Exception.Message, "Auto Display Mode",
                     MessageBoxButtons.OK, MessageBoxIcon.Error);
             };
             Application.Run(new TrayApp());

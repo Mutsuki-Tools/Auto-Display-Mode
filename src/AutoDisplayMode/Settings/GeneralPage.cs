@@ -22,7 +22,7 @@ namespace AutoDisplayMode.Settings
             mouseThreshold = Number(AppConfig.MinMouseMoveThreshold, AppConfig.MaxMouseMoveThreshold, 0, 1);
             audioThreshold = Number((decimal)AppConfig.MinAudioThreshold, (decimal)AppConfig.MaxAudioThreshold, 3, 0.001m);
             audioSeconds = Number(AppConfig.MinAudioSeconds, AppConfig.MaxAudioSeconds, 0, 1);
-            ignoreRemote = Check("偵測到使用時，忽略遠端連線軟體送出的滑鼠或鍵盤輸入");
+            ignoreRemote = Check("偵測到使用時，忽略遠端連線軟體送出的鍵盤滑鼠輸入");
             notifications = Check("自動切換時跳出通知");
             startWithWindows = Check("開機登入時自動開啟");
 
@@ -98,7 +98,7 @@ namespace AutoDisplayMode.Settings
 
         NumericUpDown Number(decimal min, decimal max, int decimals, decimal increment)
         {
-            var n = new NumericUpDown
+            var n = new NumberBox
             {
                 Minimum = min,
                 Maximum = max,

@@ -17,7 +17,7 @@ namespace AutoDisplayMode
     /// <summary>介面層：工作列圖示與右鍵選單。邏輯都在 <see cref="AppCoordinator"/>。</summary>
     sealed class TrayApp : ApplicationContext
     {
-        const string AppTitle = "省電螢幕工具";
+        const string AppTitle = "Auto Display Mode";
 
         readonly AppCoordinator app;
         readonly WindowsUsageSignals signals;
@@ -229,6 +229,7 @@ namespace AutoDisplayMode
                 "・套用後沒有任何螢幕會開著時拒絕切換；套用失敗時維持原本的模式，自動切換暫停 1 分鐘。\n" +
                 "・手動切換進入模式時，自動切換依模式的設定維持、開啟或關閉。\n" +
                 "・在設定視窗的「模式」分頁新增、刪除、重新命名、複製模式，並設定圖示顏色、手動切換進入時的自動切換與未記錄的螢幕。\n" +
+                "・拖拉清單中的模式或按「上移」「下移」調整順序（右鍵選單依這個順序列出）；套用後 cfg 的模式編號依新順序重新編排，切換條件跟著改。\n" +
                 "・刪除模式時，來源模式或目標模式是它的切換條件會一併刪除；最後一個模式與目前模式不能刪除。\n\n" +
                 "【螢幕配置】\n" +
                 "・在設定視窗的「螢幕配置」分頁選擇模式，畫布顯示目前接上的螢幕（此模式中關閉的以灰色排在下方），插拔螢幕時即時更新。\n" +
@@ -240,8 +241,8 @@ namespace AutoDisplayMode
                 "・只檢查來源模式等於目前模式的切換條件，由上往下第一條成立的就切換。\n" +
                 "・閒置：所選的使用來源全部都沒有使用，持續指定的分鐘或小時。\n" +
                 "・偵測到使用：所選的使用來源任一個出現使用就成立。\n" +
-                "・使用來源可複選「滑鼠或鍵盤」與「聲音」；聲音要連續播放達聲音持續秒數才算使用（通知音這類短暫聲音不算）。\n" +
-                "・只有目前模式有「偵測到使用＋滑鼠或鍵盤」的切換條件時才掛滑鼠與鍵盤鉤子，其他模式完全不掛。\n" +
+                "・使用來源可複選「鍵盤滑鼠」與「聲音」；聲音要連續播放達聲音持續秒數才算使用（通知音這類短暫聲音不算）。\n" +
+                "・只有目前模式有「偵測到使用＋鍵盤滑鼠」的切換條件時才掛滑鼠與鍵盤鉤子，其他模式完全不掛。\n" +
                 "・每次切換完成後所有閒置計時歸零，並有 10 秒緩衝期。\n" +
                 "・設定視窗開著時暫停自動切換。\n" +
                 "・在設定視窗的「切換條件」分頁新增、編輯、刪除切換條件，拖拉列首或按「上移」「下移」調整順序。\n" +
@@ -252,7 +253,7 @@ namespace AutoDisplayMode
                 "・滑鼠移動門檻：" + cfg.MouseMoveThreshold + " 像素\n" +
                 "・聲音音量門檻：" + cfg.AudioThreshold.ToString(CultureInfo.InvariantCulture) + "\n" +
                 "・聲音持續秒數：" + cfg.AudioSeconds + " 秒\n" +
-                "・偵測到使用時忽略遠端連線軟體送出的滑鼠或鍵盤輸入：" + OnOff(cfg.IgnoreRemoteInput) + "\n" +
+                "・偵測到使用時忽略遠端連線軟體送出的鍵盤滑鼠輸入：" + OnOff(cfg.IgnoreRemoteInput) + "\n" +
                 "・自動切換時跳出通知：" + OnOff(cfg.ShowNotifications) + "\n" +
                 "・開機登入時自動開啟：" + OnOff(cfg.StartWithWindows) + "\n\n" +
                 "【擷取】\n" +

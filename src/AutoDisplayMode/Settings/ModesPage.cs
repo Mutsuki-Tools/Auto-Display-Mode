@@ -24,6 +24,11 @@ namespace AutoDisplayMode.Settings
         readonly Label captureNote;
         readonly Button removeButton;
         readonly Button duplicateButton;
+        readonly Button upButton;
+        readonly Button downButton;
+        int dragFrom = -1;        // 按下滑鼠的模式位置（拖拉排序用）；沒有按下時為 -1
+        Point dragStart;
+        int insertAt = -1;        // 拖拉中的插入位置（插在這個位置之前，可等於模式數）；沒有拖拉時為 -1
         readonly Panel details;
         readonly TableLayoutPanel detailsTable;
         AppConfig draft = new();
@@ -49,13 +54,26 @@ namespace AutoDisplayMode.Settings
             addButton.Click += delegate { AddMode(); };
             duplicateButton.Click += delegate { DuplicateMode(); };
             removeButton.Click += delegate { RemoveMode(); };
+            upButton = ListButton("上移");
+            downButton = ListButton("下移");
+            upButton.Click += delegate { MoveSelected(-1); };
+            downButton.Click += delegate { MoveSelected(+1); };
             var captureNewButton = ListButton("以目前螢幕狀態新增模式");
             captureNewButton.Click += delegate { CaptureToNewMode(); };
 
-            // 左欄：清單在上，下方一列三個等寬按鈕，再下方一個整列寬的按鈕
-            var left = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, RowCount = 3, Margin = new Padding(0, 0, 12, 0) };
+            // 拖拉清單中的模式調整順序
+            list.AllowDrop = true;
+            list.MouseDown += OnListMouseDown;
+            list.MouseMove += OnListMouseMove;
+            list.DragOver += OnListDragOver;
+            list.DragLeave += delegate { SetInsertAt(-1); };
+            list.DragDrop += OnListDragDrop;
+
+            // 左欄：清單在上，下方一列三個等寬按鈕（新增、複製、刪除），一列上移、下移，再下方一個整列寬的按鈕
+            var left = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, RowCount = 4, Margin = new Padding(0, 0, 12, 0) };
             for (int i = 0; i < 3; i++) left.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33.33f));
             left.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            left.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             left.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             left.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             left.Controls.Add(list, 0, 0);
@@ -63,11 +81,15 @@ namespace AutoDisplayMode.Settings
             left.Controls.Add(addButton, 0, 1);
             left.Controls.Add(duplicateButton, 1, 1);
             left.Controls.Add(removeButton, 2, 1);
-            left.Controls.Add(captureNewButton, 0, 2);
+            left.Controls.Add(upButton, 0, 2);
+            left.Controls.Add(downButton, 1, 2);
+            left.Controls.Add(captureNewButton, 0, 3);
             left.SetColumnSpan(captureNewButton, 3);
             addButton.Margin = new Padding(0, 6, 3, 0);
             duplicateButton.Margin = new Padding(3, 6, 3, 0);
             removeButton.Margin = new Padding(3, 6, 0, 0);
+            upButton.Margin = new Padding(0, 6, 3, 0);
+            downButton.Margin = new Padding(3, 6, 3, 0);
 
             // ---- 右邊：選取的模式 ----
             name = new TextBox { Width = 200, Anchor = AnchorStyles.Left };
@@ -161,15 +183,16 @@ namespace AutoDisplayMode.Settings
         protected override void OnLoad(AppConfig d)
         {
             draft = d;
-            int? keep = list.SelectedItem as int?;
-            RefreshList(keep ?? app.Config.CurrentModeId);
+            // 依位置保留選取：套用後模式會依順序重新編號，原本的編號可能已指向別的模式
+            int index = list.SelectedIndex;
+            RefreshList(index >= 0 && index < d.Modes.Count ? d.Modes[index].Id : app.Config.CurrentModeId);
         }
 
         public override void OnApplied()
         {
             CapturedModeId = null;
             capturedModes.Clear();
-            ShowSelected();
+            OnLoad(draft);   // 套用後模式依順序重新編號：清單中的編號要重建（依位置保留選取）
         }
 
         /// <summary>重建清單並選取 <paramref name="selectId"/>（不存在時選第一個）。</summary>
@@ -192,6 +215,8 @@ namespace AutoDisplayMode.Settings
             try
             {
                 details.Enabled = duplicateButton.Enabled = removeButton.Enabled = m != null;
+                upButton.Enabled = list.SelectedIndex > 0;
+                downButton.Enabled = list.SelectedIndex >= 0 && list.SelectedIndex < list.Items.Count - 1;
                 if (m == null) return;
                 if (name.Text != m.Name) name.Text = m.Name;
                 manualAutoSwitch.SelectedIndex = (int)m.ManualAutoSwitch;
@@ -326,6 +351,78 @@ namespace AutoDisplayMode.Settings
             RefreshList(draft.Modes[Math.Min(index, draft.Modes.Count - 1)].Id);
         }
 
+        // ---- 調整順序 ----
+
+        void MoveSelected(int delta)
+        {
+            int from = list.SelectedIndex;
+            int to = from + delta;
+            if (from < 0 || to < 0 || to >= draft.Modes.Count) return;
+            MoveMode(from, to);
+        }
+
+        /// <summary>把第 <paramref name="from"/> 個模式移到第 <paramref name="to"/> 個位置並選取它。編號在套用時才依新順序重新編排。</summary>
+        void MoveMode(int from, int to)
+        {
+            int id = draft.Modes[from].Id;
+            draft.MoveMode(from, to);
+            MarkEdited();
+            RefreshList(id);
+        }
+
+        void OnListMouseDown(object? sender, MouseEventArgs e)
+        {
+            dragFrom = e.Button == MouseButtons.Left ? list.IndexFromPoint(e.Location) : -1;
+            dragStart = e.Location;
+        }
+
+        void OnListMouseMove(object? sender, MouseEventArgs e)
+        {
+            if (dragFrom < 0 || (e.Button & MouseButtons.Left) == 0) return;
+            Size drag = SystemInformation.DragSize;
+            if (Math.Abs(e.X - dragStart.X) < drag.Width && Math.Abs(e.Y - dragStart.Y) < drag.Height) return;
+            int from = dragFrom;
+            dragFrom = -1;
+            list.DoDragDrop(from, DragDropEffects.Move);
+            SetInsertAt(-1);
+        }
+
+        void OnListDragOver(object? sender, DragEventArgs e)
+        {
+            if (!e.Data.GetDataPresent(typeof(int)))
+            {
+                e.Effect = DragDropEffects.None;
+                return;
+            }
+            e.Effect = DragDropEffects.Move;
+            SetInsertAt(InsertIndex(list.PointToClient(new Point(e.X, e.Y))));
+        }
+
+        void OnListDragDrop(object? sender, DragEventArgs e)
+        {
+            int at = insertAt;
+            SetInsertAt(-1);
+            if (e.Data.GetData(typeof(int)) is not int from || at < 0) return;
+            int to = at > from ? at - 1 : at;   // 先移除自己，插入位置往前一格
+            if (to != from) MoveMode(from, to);
+        }
+
+        /// <summary>游標位置對應的插入位置：在某個模式的上半部插在它之前，下半部插在它之後。</summary>
+        int InsertIndex(Point p)
+        {
+            int index = list.IndexFromPoint(p);
+            if (index < 0) return p.Y < 0 ? 0 : list.Items.Count;
+            Rectangle r = list.GetItemRectangle(index);
+            return p.Y > r.Top + r.Height / 2 ? index + 1 : index;
+        }
+
+        void SetInsertAt(int value)
+        {
+            if (insertAt == value) return;
+            insertAt = value;
+            list.Invalidate();
+        }
+
         // ---- 擷取 ----
 
         void CaptureToSelectedMode()
@@ -394,6 +491,15 @@ namespace AutoDisplayMode.Settings
             TextRenderer.DrawText(e.Graphics, text, e.Font ?? Font, textBounds, e.ForeColor,
                 TextFormatFlags.VerticalCenter | TextFormatFlags.Left | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
             e.DrawFocusRectangle();
+
+            // 拖拉排序的插入線：插在這個模式之前畫在上緣，插在最後一個之後畫在最後一個的下緣
+            bool before = insertAt == e.Index, after = insertAt == list.Items.Count && e.Index == list.Items.Count - 1;
+            if (before || after)
+            {
+                int y = before ? e.Bounds.Top + 1 : e.Bounds.Bottom - 2;
+                using var pen = new Pen(SystemColors.Highlight, 2);
+                e.Graphics.DrawLine(pen, e.Bounds.Left, y, e.Bounds.Right, y);
+            }
         }
 
         static Color ToColor(int rgb) =>

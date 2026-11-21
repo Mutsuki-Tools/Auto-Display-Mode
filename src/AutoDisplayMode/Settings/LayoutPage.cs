@@ -167,7 +167,7 @@ namespace AutoDisplayMode.Settings
             app.Changed += OnAppChanged;
         }
 
-        ModeConfig? SelectedMode => modeChoice.SelectedItem is ModeItem item ? draft.FindMode(item.Id) : null;
+        ModeConfig? SelectedMode => (modeChoice.SelectedItem as ModeItem)?.Mode;
 
         DetectedMonitor? SelectedMonitor => canvas.Selected is MonitorId id ? detected.FirstOrDefault(d => d.Id == id) : null;
 
@@ -175,7 +175,7 @@ namespace AutoDisplayMode.Settings
         MonitorSettings? Shown => SelectedMode is ModeConfig m && SelectedMonitor is DetectedMonitor d ? m.SettingsFor(d) : null;
 
         /// <summary>模式下拉選單的項目（顯示名稱在建立時決定，切換分頁時重建）。</summary>
-        sealed record ModeItem(int Id, string Name)
+        sealed record ModeItem(ModeConfig Mode, string Name)
         {
             public override string ToString() => Name;
         }
@@ -183,11 +183,12 @@ namespace AutoDisplayMode.Settings
         protected override void OnLoad(AppConfig d)
         {
             draft = d;
-            int keep = (modeChoice.SelectedItem as ModeItem)?.Id ?? app.Config.CurrentModeId;
+            // 以模式物件保留選取：模式分頁調整順序、套用後依順序重新編號，都不會換掉物件
+            ModeConfig? keep = SelectedMode ?? d.FindMode(app.Config.CurrentModeId);
             modeChoice.BeginUpdate();
             modeChoice.Items.Clear();
-            foreach (ModeConfig m in d.Modes) modeChoice.Items.Add(new ModeItem(m.Id, DisplayName(m)));
-            int index = d.Modes.FindIndex(m => m.Id == keep);
+            foreach (ModeConfig m in d.Modes) modeChoice.Items.Add(new ModeItem(m, DisplayName(m)));
+            int index = keep == null ? -1 : d.Modes.IndexOf(keep);
             modeChoice.SelectedIndex = index >= 0 ? index : (d.Modes.Count > 0 ? 0 : -1);
             modeChoice.EndUpdate();
             Detect();
@@ -414,20 +415,6 @@ namespace AutoDisplayMode.Settings
         // ------------------------------------------------------------
 
         static decimal Clamp(decimal v, NumericUpDown n) => Math.Min(n.Maximum, Math.Max(n.Minimum, v));
-
-        /// <summary>
-        /// 數字欄位：Margin 不隨 DPI 縮放。NumericUpDown 本身是 ContainerControl，設定視窗依 DPI 縮放時它的 Margin
-        /// 會被重複放大（144 DPI 時 3 像素變成數十像素，列高被撐開），大小則只縮放一次、不受影響。
-        /// </summary>
-        sealed class NumberBox : NumericUpDown
-        {
-            protected override void ScaleControl(SizeF factor, BoundsSpecified specified)
-            {
-                Padding margin = Margin;
-                base.ScaleControl(factor, specified);
-                Margin = margin;
-            }
-        }
 
         NumericUpDown Coordinate()
         {

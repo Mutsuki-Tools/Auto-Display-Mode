@@ -34,7 +34,7 @@ namespace AutoDisplayMode.Windows
         readonly AudioMonitor? audio;
 
         InputHookPolicy policy;
-        bool hookUsage;           // 上次讀取以來是否有實體的滑鼠或鍵盤動作
+        bool hookUsage;           // 上次讀取以來是否有實體的鍵盤滑鼠動作
         bool isRemoteSession;     // 是否為 Windows 遠端桌面 (RDP) 工作階段
         bool hasAnchor;
         int anchorX, anchorY;

@@ -216,7 +216,8 @@ namespace AutoDisplayMode.Core
             Name = name;
         }
 
-        public int Id { get; }
+        /// <summary>模式的編號（cfg 的 [Mode.N]）。改名不變；套用設定時依模式的順序重新編號。</summary>
+        public int Id { get; internal set; }
 
         public string Name { get; set; }
 

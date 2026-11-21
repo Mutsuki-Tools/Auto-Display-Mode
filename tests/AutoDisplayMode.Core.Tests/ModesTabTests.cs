@@ -24,8 +24,68 @@ namespace AutoDisplayMode.Core.Tests
             Assert.Equal(new[] { (Play, Save), (Save, Play) }, removed.Select(s => (s.FromModeId, s.ToModeId)));
             Assert.Null(h.App.ApplySettings(draft));
             var reread = Reread(h);
-            Assert.Equal(new[] { "遊玩", "全關" }, reread.Modes.Select(m => m.Name));
-            Assert.Equal(new[] { (Play, AllOff), (AllOff, Play) }, reread.SwitchConditions.Select(s => (s.FromModeId, s.ToModeId)));
+            // 編號依順序補齊：「全關」從 3 變成 2，切換條件跟著改
+            Assert.Equal(new[] { (1, "遊玩"), (2, "全關") }, reread.Modes.Select(m => (m.Id, m.Name)));
+            Assert.Equal(new[] { (1, 2), (2, 1) }, reread.SwitchConditions.Select(s => (s.FromModeId, s.ToModeId)));
+        }
+
+        // ---- 調整順序 ----
+
+        [Fact]
+        public void 調整模式順序後套用_依新順序重新編號_切換條件與目前模式跟著改()
+        {
+            var h = PlayAndSave(Play);   // 遊玩=1、省電=2、全關=3；「遊玩」閒置 5 分鐘→「省電」；「省電」偵測到使用→「遊玩」
+            AppConfig draft = h.App.Config.Clone();
+
+            draft.MoveMode(2, 0);   // 「全關」移到最前面
+            Assert.Null(h.App.ApplySettings(draft));
+
+            var reread = Reread(h);
+            Assert.Equal(new[] { (1, "全關"), (2, "遊玩"), (3, "省電") }, reread.Modes.Select(m => (m.Id, m.Name)));
+            Assert.Equal(new[] { (2, 3), (3, 2) }, reread.SwitchConditions.Select(s => (s.FromModeId, s.ToModeId)));
+            Assert.Equal(2, reread.CurrentModeId);
+            Assert.Equal((2, "遊玩"), (h.App.Config.CurrentModeId, h.App.CurrentModeName));
+
+            // 設定視窗的副本也一起重新編號，繼續編輯、再次套用時與目前的設定一致
+            Assert.Equal(new[] { (1, "全關"), (2, "遊玩"), (3, "省電") }, draft.Modes.Select(m => (m.Id, m.Name)));
+            Assert.Equal(new[] { (2, 3), (3, 2) }, draft.SwitchConditions.Select(s => (s.FromModeId, s.ToModeId)));
+            Assert.Null(h.App.ApplySettings(draft));
+            Assert.Equal((2, "遊玩"), (h.App.Config.CurrentModeId, h.App.CurrentModeName));
+
+            // 切換條件照常運作
+            Assert.Equal(5 * 60, h.RunUntilSwitch(10 * 60));
+            Assert.Equal("省電", Assert.Single(h.Monitors.AppliedTargets));
+        }
+
+        [Fact]
+        public void 調整順序後擷取的模式仍成為目前模式()
+        {
+            var h = Modes(Play);
+            AppConfig draft = h.App.Config.Clone();
+            ModeConfig allOff = draft.FindMode(AllOff)!;
+            var captured = h.App.CaptureForSettings(allOff.Monitors)!;
+            allOff.Monitors.Clear();
+            allOff.Monitors.AddRange(captured);
+
+            draft.MoveMode(2, 0);
+            Assert.Null(h.App.ApplySettings(draft, AllOff));
+
+            Assert.Equal((1, "全關"), (h.App.Config.CurrentModeId, h.App.CurrentModeName));
+        }
+
+        [Fact]
+        public void 寫入cfg失敗時不重新編號_副本與設定都維持原本的編號()
+        {
+            var h = PlayAndSave(Play);
+            AppConfig draft = h.App.Config.Clone();
+            draft.MoveMode(2, 0);
+            h.Store.FailWrites = true;
+
+            Assert.NotNull(h.App.ApplySettings(draft));
+
+            Assert.Equal(new[] { (3, "全關"), (1, "遊玩"), (2, "省電") }, draft.Modes.Select(m => (m.Id, m.Name)));
+            Assert.Equal(new[] { (1, 2), (2, 1) }, draft.SwitchConditions.Select(s => (s.FromModeId, s.ToModeId)));
+            Assert.Equal(new[] { (1, "遊玩"), (2, "省電"), (3, "全關") }, h.App.Config.Modes.Select(m => (m.Id, m.Name)));
         }
 
         [Fact]
@@ -199,7 +259,7 @@ namespace AutoDisplayMode.Core.Tests
             Assert.Null(h.App.ApplySettings(draft, capturedModeId: Save));
 
             Assert.Equal(Play, h.App.Config.CurrentModeId);
-            Assert.Null(h.App.Config.FindMode(Save));
+            Assert.DoesNotContain("省電", h.App.Config.Modes.Select(m => m.Name));   // 刪除後編號補齊，不能用編號判斷
         }
 
         [Fact]
@@ -305,7 +365,7 @@ namespace AutoDisplayMode.Core.Tests
             var reread = Reread(h);
             Assert.Equal("睡覺", reread.FindMode(Save)!.Name);
             Assert.Equal(new[] { (Play, Save), (Save, Play) }, reread.SwitchConditions.Select(s => (s.FromModeId, s.ToModeId)));
-            Assert.Equal("「遊玩」閒置 5 分鐘（滑鼠或鍵盤、聲音）→「睡覺」", h.App.Config.SwitchConditions[0].Describe(h.App.Config));
+            Assert.Equal("「遊玩」閒置 5 分鐘（鍵盤滑鼠、聲音）→「睡覺」", h.App.Config.SwitchConditions[0].Describe(h.App.Config));
         }
     }
 }

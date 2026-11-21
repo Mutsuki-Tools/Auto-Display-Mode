@@ -42,7 +42,7 @@ namespace AutoDisplayMode.Settings
             AcceptButton = ok;
             CancelButton = cancel;
 
-            // 票 08 的分頁加在模式與切換條件之間
+            // 票 08 在這裡加入螢幕配置分頁（順序：模式、螢幕配置、切換條件、一般設定）
             modesPage = new ModesPage(app);
             pages = new SettingsPage[] { modesPage, new SwitchConditionsPage(app), new GeneralPage() };
 

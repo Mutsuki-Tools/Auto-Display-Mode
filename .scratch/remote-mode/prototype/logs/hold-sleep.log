@@ -1,0 +1,58 @@
+[00:10:03.782 +0.0s] PROTOCOL=0.2.1-test WATCHDOG_TIMEOUT=3s
+[00:10:03.784 +0.0s] REMOTE_SESSION(RDP)=False
+[00:10:03.788 +0.0s] BEFORE ACTIVE=[MAG 322URDF 3840x2160@60 (0,0)]
+[00:10:03.788 +0.0s] ADDED 1920x1080@60 adapter=0:967325732 target=259
+[00:10:04.286 +0.5s] HOOKS installed mouse=True keyboard=True
+[00:10:04.289 +0.5s] VIRTUAL_APPEARED=True after 3ms; active=True
+[00:10:04.826 +1.1s] GDI=\\.\DISPLAY29 MODES(55)=3840x2160@240 3840x2160@144 3840x2160@120 3840x2160@90 3840x2160@72 3840x2160@60 3840x2160@59 3840x2160@30 2880x1620@120 2880x1620@60 2560x1440@240 2560x1440@144 2560x1440@120 2560x1440@90 2560x1440@72 2560x1440@60 2560x1440@59 2560x1440@30 2400x1350@120 2400x1350@60 1920x1080@240 1920x1080@144 1920x1080@120 1920x1080@90 1920x1080@72 1920x1080@60 1920x1080@59 1920x1080@30 1440x810@120 1440x810@60 1366x768@240 1366x768@144 1366x768@120 1366x768@90 1366x768@72 1366x768@60 1366x768@59 1366x768@30 1280x720@144 1280x720@120 1280x720@90 1280x720@72 1280x720@60 1280x720@59 1280x720@30 960x540@120 960x540@60 800x600@240 800x600@144 800x600@120 800x600@90 800x600@72 800x600@60 800x600@59 800x600@30
+[00:10:04.826 +1.1s] RUNNING; stop with `VddProbe stop`
+[00:10:15.351 +11.6s] INPUT mouse physical=1 injected=0 | keyboard physical=0 injected=0
+[00:10:18.365 +14.6s] INPUT mouse physical=405 injected=0 | keyboard physical=0 injected=0
+[00:10:19.372 +15.6s] INPUT mouse physical=311 injected=0 | keyboard physical=0 injected=0
+[00:10:20.378 +16.6s] INPUT mouse physical=288 injected=0 | keyboard physical=0 injected=0
+[00:10:21.385 +17.6s] INPUT mouse physical=87 injected=0 | keyboard physical=0 injected=0
+[00:10:23.401 +19.6s] INPUT mouse physical=11 injected=0 | keyboard physical=0 injected=0
+[00:10:24.412 +20.6s] INPUT mouse physical=226 injected=0 | keyboard physical=0 injected=0
+[00:10:25.420 +21.6s] INPUT mouse physical=10 injected=0 | keyboard physical=0 injected=0
+[00:10:26.427 +22.7s] INPUT mouse physical=137 injected=0 | keyboard physical=0 injected=0
+[00:10:30.460 +26.7s] INPUT mouse physical=1 injected=0 | keyboard physical=0 injected=0
+[00:10:49.634 +45.9s] INPUT mouse physical=232 injected=0 | keyboard physical=0 injected=0
+[00:10:50.640 +46.9s] INPUT mouse physical=241 injected=0 | keyboard physical=0 injected=0
+[00:10:51.649 +47.9s] INPUT mouse physical=317 injected=0 | keyboard physical=0 injected=0
+[00:10:52.657 +48.9s] INPUT mouse physical=505 injected=0 | keyboard physical=0 injected=0
+[00:10:53.695 +49.9s] INPUT mouse physical=341 injected=0 | keyboard physical=0 injected=0
+[00:10:54.710 +50.9s] INPUT mouse physical=243 injected=0 | keyboard physical=0 injected=0
+[00:10:55.716 +51.9s] INPUT mouse physical=19 injected=0 | keyboard physical=0 injected=0
+[00:10:56.721 +52.9s] INPUT mouse physical=200 injected=0 | keyboard physical=0 injected=0
+[00:10:57.730 +54.0s] INPUT mouse physical=6 injected=0 | keyboard physical=0 injected=0
+[00:11:00.755 +57.0s] INPUT mouse physical=9 injected=0 | keyboard physical=0 injected=0
+[00:11:24.958 +81.2s] INPUT mouse physical=4 injected=0 | keyboard physical=0 injected=0
+[00:11:25.966 +82.2s] INPUT mouse physical=171 injected=0 | keyboard physical=0 injected=0
+[00:11:26.973 +83.2s] INPUT mouse physical=290 injected=0 | keyboard physical=0 injected=0
+[00:11:28.988 +85.2s] INPUT mouse physical=552 injected=0 | keyboard physical=0 injected=0
+[00:11:29.993 +86.2s] INPUT mouse physical=584 injected=0 | keyboard physical=0 injected=0
+[00:11:31.002 +87.2s] INPUT mouse physical=105 injected=0 | keyboard physical=0 injected=0
+[00:11:32.010 +88.2s] INPUT mouse physical=1 injected=0 | keyboard physical=0 injected=0
+[00:11:33.020 +89.2s] INPUT mouse physical=356 injected=0 | keyboard physical=0 injected=0
+[00:11:34.028 +90.3s] INPUT mouse physical=633 injected=0 | keyboard physical=0 injected=0
+[00:11:35.040 +91.3s] INPUT mouse physical=332 injected=0 | keyboard physical=0 injected=0
+[00:11:36.049 +92.3s] INPUT mouse physical=2 injected=0 | keyboard physical=0 injected=0
+[00:11:37.059 +93.3s] INPUT mouse physical=326 injected=0 | keyboard physical=0 injected=0
+[00:11:38.067 +94.3s] INPUT mouse physical=586 injected=0 | keyboard physical=0 injected=0
+[00:11:39.073 +95.3s] INPUT mouse physical=179 injected=0 | keyboard physical=0 injected=0
+[00:11:40.081 +96.3s] INPUT mouse physical=329 injected=0 | keyboard physical=0 injected=0
+[00:11:41.088 +97.3s] INPUT mouse physical=363 injected=0 | keyboard physical=0 injected=0
+[00:11:42.092 +98.3s] INPUT mouse physical=533 injected=0 | keyboard physical=0 injected=0
+[00:11:43.101 +99.3s] INPUT mouse physical=55 injected=0 | keyboard physical=0 injected=0
+[00:11:44.109 +100.3s] INPUT mouse physical=227 injected=0 | keyboard physical=0 injected=0
+[00:11:45.120 +101.3s] INPUT mouse physical=72 injected=0 | keyboard physical=0 injected=0
+[00:11:46.125 +102.4s] INPUT mouse physical=9 injected=0 | keyboard physical=0 injected=0
+[00:11:47.135 +103.4s] INPUT mouse physical=1 injected=0 | keyboard physical=0 injected=0
+[00:12:43.630 +159.9s] INPUT mouse physical=117 injected=0 | keyboard physical=0 injected=0
+[00:12:44.635 +160.9s] INPUT mouse physical=6 injected=0 | keyboard physical=0 injected=0
+[00:13:05.833 +182.1s] INPUT mouse physical=0 injected=0 | keyboard physical=1 injected=0
+[00:13:07.848 +184.1s] INPUT mouse physical=0 injected=43 | keyboard physical=0 injected=0
+[00:13:08.855 +185.1s] INPUT mouse physical=0 injected=53 | keyboard physical=0 injected=0
+[00:13:10.876 +187.1s] INPUT mouse physical=0 injected=0 | keyboard physical=2 injected=0
+[00:13:14.280 +190.5s] STOP requested
+[00:13:15.294 +191.5s] REMOVED; VIRTUAL_PRESENT=False ACTIVE=[MAG 322URDF 3840x2160@60 (0,0)]

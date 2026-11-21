@@ -1,0 +1,6 @@
+OK Meta Virtual Monitor
+OK NVIDIA GeForce RTX 3080
+OK Parsec Virtual Display Adapter
+OK SudoMaker Virtual Display Adapter
+Error Virtual Desktop Monitor
+OK Wacom MovinkPad InstantPenDisplay

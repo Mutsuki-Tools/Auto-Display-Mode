@@ -1,0 +1,5 @@
+[00:09:07.257 +0.0s] watching target; present=True ACTIVE=[AutoDisplay 1920x1080@59 (0,0)]
+[00:09:10.625 +3.4s] VIRTUAL_GONE after 3366ms
+[00:09:10.626 +3.4s] ACTIVE changed: [ 1920x1080@59 (0,0)]
+[00:09:10.994 +3.7s] ACTIVE changed: [MAG 322URDF 3840x2160@60 (0,0)]
+[00:09:30.650 +23.4s] FINAL ACTIVE=[MAG 322URDF 3840x2160@60 (0,0)]

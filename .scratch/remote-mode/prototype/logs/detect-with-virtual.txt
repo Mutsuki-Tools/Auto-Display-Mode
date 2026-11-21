@@ -1,0 +1,160 @@
+[00:03:13.957 +0.0s] TARGET 0:81681:4355 active=True available=True tech=10 name="MAG 322URDF" edid=MSI/3DD8
+    monitor=\\?\DISPLAY#MSI3DD8#5&1dd06ae1&0&UID4355#{e6f07b5f-ee97-4a90-b076-33f57bf4eaa7}
+    adapter=\\?\PCI#VEN_10DE&DEV_2216&SUBSYS_389B1462&REV_A1#4&22f77229&0&0008#{5b45201d-f2f2-4f3b-85bb-30ff1f953599}
+    adapterHwIds=PCI\VEN_10DE&DEV_2216&SUBSYS_389B1462&REV_A1\4&22f77229&0&0008 => PCI\VEN_10DE&DEV_2216&SUBSYS_389B1462&REV_A1;PCI\VEN_10DE&DEV_2216&SUBSYS_389B1462;PCI\VEN_10DE&DEV_2216&CC_030000;PCI\VEN_10DE&DEV_2216&CC_0300
+[00:03:13.958 +0.0s] TARGET 0:81681:4357 active=True available=True tech=10 name="XV272U KV" edid=ACR/0833
+    monitor=\\?\DISPLAY#ACR0833#5&1dd06ae1&0&UID4357#{e6f07b5f-ee97-4a90-b076-33f57bf4eaa7}
+    adapter=\\?\PCI#VEN_10DE&DEV_2216&SUBSYS_389B1462&REV_A1#4&22f77229&0&0008#{5b45201d-f2f2-4f3b-85bb-30ff1f953599}
+    adapterHwIds=PCI\VEN_10DE&DEV_2216&SUBSYS_389B1462&REV_A1\4&22f77229&0&0008 => PCI\VEN_10DE&DEV_2216&SUBSYS_389B1462&REV_A1;PCI\VEN_10DE&DEV_2216&SUBSYS_389B1462;PCI\VEN_10DE&DEV_2216&CC_030000;PCI\VEN_10DE&DEV_2216&CC_0300
+[00:03:13.959 +0.0s] TARGET 0:967325732:256 active=True available=True tech=5 name="AutoDisplay" edid=SMK/D1CE
+    monitor=\\?\DISPLAY#SMKD1CE#1&f868fb5&0&UID256#{e6f07b5f-ee97-4a90-b076-33f57bf4eaa7}
+    adapter=\\?\ROOT#DISPLAY#0003#{5b45201d-f2f2-4f3b-85bb-30ff1f953599}
+    adapterHwIds=ROOT\DISPLAY\0003 => Root\SudoMaker\SudoVDA
+[00:03:13.959 +0.0s] TARGET 0:81681:4352 active=True available=True tech=5 name="Wacom DTK168" edid=WAC/1090
+    monitor=\\?\DISPLAY#WAC1090#5&1dd06ae1&0&UID4352#{e6f07b5f-ee97-4a90-b076-33f57bf4eaa7}
+    adapter=\\?\PCI#VEN_10DE&DEV_2216&SUBSYS_389B1462&REV_A1#4&22f77229&0&0008#{5b45201d-f2f2-4f3b-85bb-30ff1f953599}
+    adapterHwIds=PCI\VEN_10DE&DEV_2216&SUBSYS_389B1462&REV_A1\4&22f77229&0&0008 => PCI\VEN_10DE&DEV_2216&SUBSYS_389B1462&REV_A1;PCI\VEN_10DE&DEV_2216&SUBSYS_389B1462;PCI\VEN_10DE&DEV_2216&CC_030000;PCI\VEN_10DE&DEV_2216&CC_0300
+[00:03:13.959 +0.0s] TARGET 0:967342152:256 active=False available=False tech=16 name="" edid=@@@/0000
+    monitor=
+    adapter=\\?\ROOT#DISPLAY#0001#{5b45201d-f2f2-4f3b-85bb-30ff1f953599}
+    adapterHwIds=ROOT\DISPLAY\0001 => root\MetaVirtualScreenDriver
+[00:03:13.959 +0.0s] TARGET 0:967331742:256 active=False available=False tech=16 name="" edid=@@@/0000
+    monitor=
+    adapter=\\?\ROOT#EASYCANVAS_SDK_VDISPIDD#0000#{5b45201d-f2f2-4f3b-85bb-30ff1f953599}
+    adapterHwIds=ROOT\EASYCANVAS_SDK_VDISPIDD\0000 => root\easycanvas_sdk_vdispidd
+[00:03:13.959 +0.0s] TARGET 0:967374306:256 active=False available=False tech=16 name="" edid=@@@/0000
+    monitor=
+    adapter=\\?\ROOT#DISPLAY#0002#{5b45201d-f2f2-4f3b-85bb-30ff1f953599}
+    adapterHwIds=ROOT\DISPLAY\0002 => Root\Parsec\VDA
+[00:03:13.959 +0.0s] TARGET 0:967325732:257 active=False available=False tech=16 name="" edid=@@@/0000
+    monitor=
+    adapter=\\?\ROOT#DISPLAY#0003#{5b45201d-f2f2-4f3b-85bb-30ff1f953599}
+    adapterHwIds=ROOT\DISPLAY\0003 => Root\SudoMaker\SudoVDA
+[00:03:13.959 +0.0s] TARGET 0:967342152:257 active=False available=False tech=16 name="" edid=@@@/0000
+    monitor=
+    adapter=\\?\ROOT#DISPLAY#0001#{5b45201d-f2f2-4f3b-85bb-30ff1f953599}
+    adapterHwIds=ROOT\DISPLAY\0001 => root\MetaVirtualScreenDriver
+[00:03:13.960 +0.0s] TARGET 0:967374306:257 active=False available=False tech=16 name="" edid=@@@/0000
+    monitor=
+    adapter=\\?\ROOT#DISPLAY#0002#{5b45201d-f2f2-4f3b-85bb-30ff1f953599}
+    adapterHwIds=ROOT\DISPLAY\0002 => Root\Parsec\VDA
+[00:03:13.960 +0.0s] TARGET 0:967325732:258 active=False available=False tech=16 name="" edid=@@@/0000
+    monitor=
+    adapter=\\?\ROOT#DISPLAY#0003#{5b45201d-f2f2-4f3b-85bb-30ff1f953599}
+    adapterHwIds=ROOT\DISPLAY\0003 => Root\SudoMaker\SudoVDA
+[00:03:13.960 +0.0s] TARGET 0:967342152:258 active=False available=False tech=16 name="" edid=@@@/0000
+    monitor=
+    adapter=\\?\ROOT#DISPLAY#0001#{5b45201d-f2f2-4f3b-85bb-30ff1f953599}
+    adapterHwIds=ROOT\DISPLAY\0001 => root\MetaVirtualScreenDriver
+[00:03:13.960 +0.0s] TARGET 0:967374306:258 active=False available=False tech=16 name="" edid=@@@/0000
+    monitor=
+    adapter=\\?\ROOT#DISPLAY#0002#{5b45201d-f2f2-4f3b-85bb-30ff1f953599}
+    adapterHwIds=ROOT\DISPLAY\0002 => Root\Parsec\VDA
+[00:03:13.960 +0.0s] TARGET 0:967325732:259 active=False available=False tech=16 name="" edid=@@@/0000
+    monitor=
+    adapter=\\?\ROOT#DISPLAY#0003#{5b45201d-f2f2-4f3b-85bb-30ff1f953599}
+    adapterHwIds=ROOT\DISPLAY\0003 => Root\SudoMaker\SudoVDA
+[00:03:13.960 +0.0s] TARGET 0:967342152:259 active=False available=False tech=16 name="" edid=@@@/0000
+    monitor=
+    adapter=\\?\ROOT#DISPLAY#0001#{5b45201d-f2f2-4f3b-85bb-30ff1f953599}
+    adapterHwIds=ROOT\DISPLAY\0001 => root\MetaVirtualScreenDriver
+[00:03:13.960 +0.0s] TARGET 0:967374306:259 active=False available=False tech=16 name="" edid=@@@/0000
+    monitor=
+    adapter=\\?\ROOT#DISPLAY#0002#{5b45201d-f2f2-4f3b-85bb-30ff1f953599}
+    adapterHwIds=ROOT\DISPLAY\0002 => Root\Parsec\VDA
+[00:03:13.960 +0.0s] TARGET 0:967325732:260 active=False available=False tech=16 name="" edid=@@@/0000
+    monitor=
+    adapter=\\?\ROOT#DISPLAY#0003#{5b45201d-f2f2-4f3b-85bb-30ff1f953599}
+    adapterHwIds=ROOT\DISPLAY\0003 => Root\SudoMaker\SudoVDA
+[00:03:13.960 +0.0s] TARGET 0:967342152:260 active=False available=False tech=16 name="" edid=@@@/0000
+    monitor=
+    adapter=\\?\ROOT#DISPLAY#0001#{5b45201d-f2f2-4f3b-85bb-30ff1f953599}
+    adapterHwIds=ROOT\DISPLAY\0001 => root\MetaVirtualScreenDriver
+[00:03:13.960 +0.0s] TARGET 0:967374306:260 active=False available=False tech=16 name="" edid=@@@/0000
+    monitor=
+    adapter=\\?\ROOT#DISPLAY#0002#{5b45201d-f2f2-4f3b-85bb-30ff1f953599}
+    adapterHwIds=ROOT\DISPLAY\0002 => Root\Parsec\VDA
+[00:03:13.960 +0.0s] TARGET 0:967325732:261 active=False available=False tech=16 name="" edid=@@@/0000
+    monitor=
+    adapter=\\?\ROOT#DISPLAY#0003#{5b45201d-f2f2-4f3b-85bb-30ff1f953599}
+    adapterHwIds=ROOT\DISPLAY\0003 => Root\SudoMaker\SudoVDA
+[00:03:13.960 +0.0s] TARGET 0:967342152:261 active=False available=False tech=16 name="" edid=@@@/0000
+    monitor=
+    adapter=\\?\ROOT#DISPLAY#0001#{5b45201d-f2f2-4f3b-85bb-30ff1f953599}
+    adapterHwIds=ROOT\DISPLAY\0001 => root\MetaVirtualScreenDriver
+[00:03:13.960 +0.0s] TARGET 0:967374306:261 active=False available=False tech=16 name="" edid=@@@/0000
+    monitor=
+    adapter=\\?\ROOT#DISPLAY#0002#{5b45201d-f2f2-4f3b-85bb-30ff1f953599}
+    adapterHwIds=ROOT\DISPLAY\0002 => Root\Parsec\VDA
+[00:03:13.960 +0.0s] TARGET 0:967325732:262 active=False available=False tech=16 name="" edid=@@@/0000
+    monitor=
+    adapter=\\?\ROOT#DISPLAY#0003#{5b45201d-f2f2-4f3b-85bb-30ff1f953599}
+    adapterHwIds=ROOT\DISPLAY\0003 => Root\SudoMaker\SudoVDA
+[00:03:13.960 +0.0s] TARGET 0:967342152:262 active=False available=False tech=16 name="" edid=@@@/0000
+    monitor=
+    adapter=\\?\ROOT#DISPLAY#0001#{5b45201d-f2f2-4f3b-85bb-30ff1f953599}
+    adapterHwIds=ROOT\DISPLAY\0001 => root\MetaVirtualScreenDriver
+[00:03:13.960 +0.0s] TARGET 0:967374306:262 active=False available=False tech=16 name="" edid=@@@/0000
+    monitor=
+    adapter=\\?\ROOT#DISPLAY#0002#{5b45201d-f2f2-4f3b-85bb-30ff1f953599}
+    adapterHwIds=ROOT\DISPLAY\0002 => Root\Parsec\VDA
+[00:03:13.960 +0.0s] TARGET 0:967325732:263 active=False available=False tech=16 name="" edid=@@@/0000
+    monitor=
+    adapter=\\?\ROOT#DISPLAY#0003#{5b45201d-f2f2-4f3b-85bb-30ff1f953599}
+    adapterHwIds=ROOT\DISPLAY\0003 => Root\SudoMaker\SudoVDA
+[00:03:13.960 +0.0s] TARGET 0:967374306:263 active=False available=False tech=16 name="" edid=@@@/0000
+    monitor=
+    adapter=\\?\ROOT#DISPLAY#0002#{5b45201d-f2f2-4f3b-85bb-30ff1f953599}
+    adapterHwIds=ROOT\DISPLAY\0002 => Root\Parsec\VDA
+[00:03:13.960 +0.0s] TARGET 0:967325732:264 active=False available=False tech=16 name="" edid=@@@/0000
+    monitor=
+    adapter=\\?\ROOT#DISPLAY#0003#{5b45201d-f2f2-4f3b-85bb-30ff1f953599}
+    adapterHwIds=ROOT\DISPLAY\0003 => Root\SudoMaker\SudoVDA
+[00:03:13.960 +0.0s] TARGET 0:967374306:264 active=False available=False tech=16 name="" edid=@@@/0000
+    monitor=
+    adapter=\\?\ROOT#DISPLAY#0002#{5b45201d-f2f2-4f3b-85bb-30ff1f953599}
+    adapterHwIds=ROOT\DISPLAY\0002 => Root\Parsec\VDA
+[00:03:13.960 +0.0s] TARGET 0:967325732:265 active=False available=False tech=16 name="" edid=@@@/0000
+    monitor=
+    adapter=\\?\ROOT#DISPLAY#0003#{5b45201d-f2f2-4f3b-85bb-30ff1f953599}
+    adapterHwIds=ROOT\DISPLAY\0003 => Root\SudoMaker\SudoVDA
+[00:03:13.960 +0.0s] TARGET 0:967374306:265 active=False available=False tech=16 name="" edid=@@@/0000
+    monitor=
+    adapter=\\?\ROOT#DISPLAY#0002#{5b45201d-f2f2-4f3b-85bb-30ff1f953599}
+    adapterHwIds=ROOT\DISPLAY\0002 => Root\Parsec\VDA
+[00:03:13.960 +0.0s] TARGET 0:967374306:266 active=False available=False tech=16 name="" edid=@@@/0000
+    monitor=
+    adapter=\\?\ROOT#DISPLAY#0002#{5b45201d-f2f2-4f3b-85bb-30ff1f953599}
+    adapterHwIds=ROOT\DISPLAY\0002 => Root\Parsec\VDA
+[00:03:13.960 +0.0s] TARGET 0:967374306:267 active=False available=False tech=16 name="" edid=@@@/0000
+    monitor=
+    adapter=\\?\ROOT#DISPLAY#0002#{5b45201d-f2f2-4f3b-85bb-30ff1f953599}
+    adapterHwIds=ROOT\DISPLAY\0002 => Root\Parsec\VDA
+[00:03:13.960 +0.0s] TARGET 0:967374306:268 active=False available=False tech=16 name="" edid=@@@/0000
+    monitor=
+    adapter=\\?\ROOT#DISPLAY#0002#{5b45201d-f2f2-4f3b-85bb-30ff1f953599}
+    adapterHwIds=ROOT\DISPLAY\0002 => Root\Parsec\VDA
+[00:03:13.960 +0.0s] TARGET 0:967374306:269 active=False available=False tech=16 name="" edid=@@@/0000
+    monitor=
+    adapter=\\?\ROOT#DISPLAY#0002#{5b45201d-f2f2-4f3b-85bb-30ff1f953599}
+    adapterHwIds=ROOT\DISPLAY\0002 => Root\Parsec\VDA
+[00:03:13.960 +0.0s] TARGET 0:967374306:270 active=False available=False tech=16 name="" edid=@@@/0000
+    monitor=
+    adapter=\\?\ROOT#DISPLAY#0002#{5b45201d-f2f2-4f3b-85bb-30ff1f953599}
+    adapterHwIds=ROOT\DISPLAY\0002 => Root\Parsec\VDA
+[00:03:13.960 +0.0s] TARGET 0:967374306:271 active=False available=False tech=16 name="" edid=@@@/0000
+    monitor=
+    adapter=\\?\ROOT#DISPLAY#0002#{5b45201d-f2f2-4f3b-85bb-30ff1f953599}
+    adapterHwIds=ROOT\DISPLAY\0002 => Root\Parsec\VDA
+[00:03:13.962 +0.0s] TARGET 0:81681:4353 active=False available=False tech=10 name="" edid=@@@/0000
+    monitor=
+    adapter=\\?\PCI#VEN_10DE&DEV_2216&SUBSYS_389B1462&REV_A1#4&22f77229&0&0008#{5b45201d-f2f2-4f3b-85bb-30ff1f953599}
+    adapterHwIds=PCI\VEN_10DE&DEV_2216&SUBSYS_389B1462&REV_A1\4&22f77229&0&0008 => PCI\VEN_10DE&DEV_2216&SUBSYS_389B1462&REV_A1;PCI\VEN_10DE&DEV_2216&SUBSYS_389B1462;PCI\VEN_10DE&DEV_2216&CC_030000;PCI\VEN_10DE&DEV_2216&CC_0300
+[00:03:13.962 +0.0s] TARGET 0:81681:4354 active=False available=False tech=4 name="" edid=@@@/0000
+    monitor=
+    adapter=\\?\PCI#VEN_10DE&DEV_2216&SUBSYS_389B1462&REV_A1#4&22f77229&0&0008#{5b45201d-f2f2-4f3b-85bb-30ff1f953599}
+    adapterHwIds=PCI\VEN_10DE&DEV_2216&SUBSYS_389B1462&REV_A1\4&22f77229&0&0008 => PCI\VEN_10DE&DEV_2216&SUBSYS_389B1462&REV_A1;PCI\VEN_10DE&DEV_2216&SUBSYS_389B1462;PCI\VEN_10DE&DEV_2216&CC_030000;PCI\VEN_10DE&DEV_2216&CC_0300
+[00:03:13.962 +0.0s] TARGET 0:81681:4358 active=False available=False tech=4 name="" edid=@@@/0000
+    monitor=
+    adapter=\\?\PCI#VEN_10DE&DEV_2216&SUBSYS_389B1462&REV_A1#4&22f77229&0&0008#{5b45201d-f2f2-4f3b-85bb-30ff1f953599}
+    adapterHwIds=PCI\VEN_10DE&DEV_2216&SUBSYS_389B1462&REV_A1\4&22f77229&0&0008 => PCI\VEN_10DE&DEV_2216&SUBSYS_389B1462&REV_A1;PCI\VEN_10DE&DEV_2216&SUBSYS_389B1462;PCI\VEN_10DE&DEV_2216&CC_030000;PCI\VEN_10DE&DEV_2216&CC_0300

@@ -1,21 +1,7 @@
-using System;
 using System.Collections.Generic;
 
 namespace AutoDisplayMode.Core
 {
-    /// <summary>
-    /// 舊版的兩個固定角色：遊玩、省電。過渡期間舊版的兩條切換條件以它們指向模式
-    /// （<see cref="AppConfig.HomeModeId"/>、<see cref="AppConfig.AwayModeId"/>），之後的版本改由切換條件取代並移除。
-    /// </summary>
-    public enum Mode
-    {
-        /// <summary>遊玩（cfg 中為 home）。</summary>
-        Home,
-
-        /// <summary>省電（cfg 中為 away）。</summary>
-        Away,
-    }
-
     /// <summary>設定（cfg 的內容）。</summary>
     public sealed class AppConfig
     {
@@ -46,34 +32,9 @@ namespace AutoDisplayMode.Core
 
         public ModeConfig? FindMode(int id) => Modes.Find(m => m.Id == id);
 
-        // ---- 舊版切換條件（過渡用：之後的版本改由切換條件取代並移除）----
+        // ---- 切換條件 ----
 
-        /// <summary>遊玩模式閒置幾分鐘後切換到省電模式。</summary>
-        public int IdleMinutes { get; set; } = 10;
-
-        /// <summary>省電模式中持續播放聲音算不算使用；遊玩模式中持續播放聲音會不會打斷閒置計時。</summary>
-        public bool AudioDetect { get; set; } = true;
-
-        /// <summary>舊版切換條件中扮演「遊玩」的模式 ID；0 表示沒有。</summary>
-        public int HomeModeId { get; set; }
-
-        /// <summary>舊版切換條件中扮演「省電」的模式 ID；0 表示沒有。</summary>
-        public int AwayModeId { get; set; }
-
-        /// <summary>模式 <paramref name="modeId"/> 在舊版切換條件中扮演的角色；都不是時為 null。</summary>
-        public Mode? LegacyRoleOf(int modeId) =>
-            modeId == 0 ? null : modeId == HomeModeId ? Mode.Home : modeId == AwayModeId ? Mode.Away : null;
-
-        /// <summary>讀取時 cfg 中是否有 HomeMode／AwayMode 鍵（沒有時以 <see cref="LegacyLastMode"/> 轉移）。</summary>
-        internal bool LegacyRolesSpecified { get; set; }
-
-        /// <summary>讀取時 cfg 中的舊鍵 LastMode（遊玩/省電）；只用來轉移成 HomeMode／AwayMode，不再寫出。</summary>
-        internal Mode? LegacyLastMode { get; set; }
-
-        /// <summary>讀取時 cfg 中有已不再使用的鍵（BatPath、HomeArgs、AwayArgs、LastMode）：應立即改寫 cfg。</summary>
-        internal bool HasObsoleteKeys { get; set; }
-
-        internal static Mode ParseMode(string s) =>
-            string.Equals(s.Trim(), "away", StringComparison.OrdinalIgnoreCase) ? Mode.Away : Mode.Home;
+        /// <summary>所有切換條件（依表格順序：同一來源模式的條件由上往下檢查，第一條成立的就執行）。</summary>
+        public List<SwitchCondition> SwitchConditions { get; } = new();
     }
 }

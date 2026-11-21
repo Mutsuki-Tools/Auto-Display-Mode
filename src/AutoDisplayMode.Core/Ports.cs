@@ -25,17 +25,17 @@ namespace AutoDisplayMode.Core
     }
 
     /// <summary>
-    /// 使用訊號：提供滑鼠或鍵盤、聲音的使用跡象，並依核心的指令安裝或移除滑鼠鉤子。
+    /// 使用訊號：提供滑鼠或鍵盤、聲音的使用跡象，並依核心的指令安裝或移除滑鼠與鍵盤鉤子。
     /// </summary>
     public interface IUsageSignals
     {
         /// <summary>
-        /// 自上次呼叫以來，滑鼠鉤子是否偵測到實體滑鼠使用（已經過移動門檻與遠端過濾）。呼叫後清除。
+        /// 自上次呼叫以來，滑鼠或鍵盤鉤子是否偵測到實體的滑鼠或鍵盤使用（已經過移動門檻與遠端過濾）。呼叫後清除。
         /// </summary>
-        bool TakeMouseUsage();
+        bool TakeHookUsage();
 
-        /// <summary>清除累積的滑鼠使用，並重設移動門檻的起點。</summary>
-        void ResetMouseTracking();
+        /// <summary>清除鉤子累積的使用，並重設滑鼠移動門檻的起點。</summary>
+        void ResetHookTracking();
 
         /// <summary>Windows 最後輸入時間（任意單位的計數，只用來比較是否改變）。</summary>
         uint LastInputTick { get; }
@@ -46,18 +46,18 @@ namespace AutoDisplayMode.Core
         /// <summary>要求下次讀取聲音峰值前重新列舉播放裝置。</summary>
         void RequestAudioRefresh();
 
-        /// <summary>告知目前需要的滑鼠鉤子狀態；每秒至少呼叫一次。</summary>
-        void ApplyHookPolicy(MouseHookPolicy policy);
+        /// <summary>告知目前需要的鉤子狀態；每秒至少呼叫一次。</summary>
+        void ApplyHookPolicy(InputHookPolicy policy);
     }
 
     /// <summary>
-    /// 滑鼠鉤子的需求。
+    /// 滑鼠與鍵盤鉤子的需求（兩者一起安裝或移除）。
     /// </summary>
-    /// <param name="Install">是否需要安裝滑鼠鉤子。</param>
+    /// <param name="Install">是否需要安裝低階滑鼠鉤子與低階鍵盤鉤子。</param>
     /// <param name="IgnoreUntilMs">在此時間（<see cref="IClock"/> 的毫秒）之前，鉤子收到的輸入都不算使用，並重設移動起點。</param>
     /// <param name="MoveThreshold">滑鼠要移動超過幾個像素才算使用。</param>
-    /// <param name="IgnoreRemoteInput">是否忽略遠端連線軟體送出的滑鼠輸入。</param>
-    public readonly record struct MouseHookPolicy(bool Install, long IgnoreUntilMs, int MoveThreshold, bool IgnoreRemoteInput);
+    /// <param name="IgnoreRemoteInput">是否忽略遠端連線軟體送出（注入）的滑鼠與鍵盤輸入。</param>
+    public readonly record struct InputHookPolicy(bool Install, long IgnoreUntilMs, int MoveThreshold, bool IgnoreRemoteInput);
 
     /// <summary>cfg 儲存：讀取／寫入 cfg 文字。</summary>
     public interface IConfigStore

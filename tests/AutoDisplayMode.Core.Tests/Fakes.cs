@@ -13,35 +13,55 @@ namespace AutoDisplayMode.Core.Tests
     sealed class FakeSignals : IUsageSignals
     {
         readonly FakeClock clock;
-        bool mouseUsage;
+        bool hookUsage;
 
         public FakeSignals(FakeClock clock) => this.clock = clock;
 
         public uint LastInputTick { get; set; } = 1;
         public float AudioPeak { get; set; }
         public int AudioRefreshRequests { get; private set; }
-        public MouseHookPolicy Policy { get; private set; }
+        public InputHookPolicy Policy { get; private set; }
 
-        /// <summary>模擬實體滑鼠動作：只有鉤子已安裝且不在忽略期間才算數（與真實鉤子相同）。</summary>
-        public void MoveMouse()
+        /// <summary>
+        /// 模擬實體滑鼠動作：Windows 最後輸入時間改變；鉤子已安裝且不在忽略期間時，鉤子也偵測到使用（與真實鉤子相同）。
+        /// </summary>
+        public void MoveMouse() => PhysicalInput();
+
+        /// <summary>模擬實體鍵盤輸入（與 <see cref="MoveMouse"/> 相同：核心不區分滑鼠與鍵盤）。</summary>
+        public void PressKey() => PhysicalInput();
+
+        /// <summary>
+        /// 模擬遠端連線軟體送出（注入）的輸入：Windows 最後輸入時間改變，但真實鉤子在忽略遠端輸入時會濾掉，
+        /// 所以只有 <see cref="InputHookPolicy.IgnoreRemoteInput"/> 關閉時鉤子才算數。
+        /// </summary>
+        public void RemoteInput()
         {
-            if (Policy.Install && clock.NowMs >= Policy.IgnoreUntilMs) mouseUsage = true;
+            LastInputTick++;
+            if (!Policy.IgnoreRemoteInput && HookActive) hookUsage = true;
         }
 
-        /// <summary>模擬鍵盤或滑鼠輸入：Windows 最後輸入時間改變。</summary>
+        /// <summary>模擬鍵盤或滑鼠輸入，只改變 Windows 最後輸入時間（鉤子沒看到，例如沒有安裝）。</summary>
         public void UseKeyboardOrMouse() => LastInputTick++;
 
-        public bool TakeMouseUsage()
+        bool HookActive => Policy.Install && clock.NowMs >= Policy.IgnoreUntilMs;
+
+        void PhysicalInput()
         {
-            bool r = mouseUsage;
-            mouseUsage = false;
+            LastInputTick++;
+            if (HookActive) hookUsage = true;
+        }
+
+        public bool TakeHookUsage()
+        {
+            bool r = hookUsage;
+            hookUsage = false;
             return r;
         }
 
-        public void ResetMouseTracking() => mouseUsage = false;
+        public void ResetHookTracking() => hookUsage = false;
         public float ReadAudioPeak() => AudioPeak;
         public void RequestAudioRefresh() => AudioRefreshRequests++;
-        public void ApplyHookPolicy(MouseHookPolicy policy) => Policy = policy;
+        public void ApplyHookPolicy(InputHookPolicy policy) => Policy = policy;
     }
 
     sealed class FakeStore : IConfigStore
@@ -121,6 +141,27 @@ namespace AutoDisplayMode.Core.Tests
             };
     }
 
+    /// <summary>手寫 cfg 中一條切換條件（Switch）的內容（不含分段標題；由 <see cref="Harness.Modes"/> 編號）。</summary>
+    static class Sw
+    {
+        /// <summary>使用來源「滑鼠或鍵盤」。</summary>
+        public const UsageSources MouseOrKeyboard = UsageSources.MouseKeyboard;
+        /// <summary>使用來源「聲音」。</summary>
+        public const UsageSources Audio = UsageSources.Audio;
+        /// <summary>兩種使用來源都選。</summary>
+        public const UsageSources Both = UsageSources.MouseKeyboard | UsageSources.Audio;
+
+        public static string Idle(int from, int to, int amount, UsageSources sources = MouseOrKeyboard, IdleUnit unit = IdleUnit.Minutes) =>
+            Harness.Cfg("From=" + from, "Condition=Idle", "IdleTime=" + amount, "IdleUnit=" + unit,
+                "MouseKeyboard=" + Flag(sources, MouseOrKeyboard), "Audio=" + Flag(sources, Audio), "To=" + to);
+
+        public static string Usage(int from, int to, UsageSources sources = MouseOrKeyboard) =>
+            Harness.Cfg("From=" + from, "Condition=UsageDetected",
+                "MouseKeyboard=" + Flag(sources, MouseOrKeyboard), "Audio=" + Flag(sources, Audio), "To=" + to);
+
+        static string Flag(UsageSources sources, UsageSources flag) => (sources & flag) != 0 ? "1" : "0";
+    }
+
     sealed class FakeStartup : IStartupRegistration
     {
         public bool IsEnabled { get; set; }
@@ -195,31 +236,46 @@ namespace AutoDisplayMode.Core.Tests
 
         public static string Cfg(params string[] lines) => string.Join("\r\n", lines) + "\r\n";
 
+        /// <summary><see cref="Modes"/> 中的三個模式。</summary>
+        public const int Play = 1, Save = 2, AllOff = 3;
+
         /// <summary>
-        /// 兩個模式「遊玩」（1）與「省電」（2），舊版切換條件 HomeMode=1、AwayMode=2，各記錄預設螢幕為主螢幕。
-        /// <paramref name="current"/> 為 home 或 away。<paramref name="extra"/> 中的 IdleMinutes、AudioDetect、HomeMode、AwayMode
-        /// 放在 [LegacySwitch]，其餘放在 [General]（後寫的覆蓋先寫的）。
+        /// 三個模式「遊玩」（1，1920x1080）、「省電」（2，1280x720）、「全關」（3，800x600），各記錄預設螢幕為主螢幕。
+        /// <paramref name="extra"/> 中以 <c>From=</c> 開頭的是切換條件（見 <see cref="Sw"/>，依出現順序編號），其餘放在 [General]。
         /// </summary>
-        public static Harness TwoModes(string current, params string[] extra)
+        public static Harness Modes(int current, params string[] extra)
         {
-            static bool IsLegacy(string line) =>
-                new[] { "IdleMinutes=", "AudioDetect=", "HomeMode=", "AwayMode=" }
-                    .Any(k => line.StartsWith(k, StringComparison.OrdinalIgnoreCase));
-            static string Monitor(int mode, int w, int h) => Cfg(
-                "[Mode." + mode + ".Monitor.1]", "Monitor=" + DefaultMonitor.Id, "Enabled=1", "X=0", "Y=0",
+            static string Mode(int id, string name, int w, int h) => Cfg(
+                "[Mode." + id + "]", "Name=" + name,
+                "[Mode." + id + ".Monitor.1]", "Monitor=" + DefaultMonitor.Id, "Enabled=1", "X=0", "Y=0",
                 "Width=" + w, "Height=" + h, "RefreshRate=60", "Primary=1");
 
             var general = new List<string>
             {
-                "[General]", "AutoSwitch=1", "CurrentMode=" + (current == "away" ? 2 : 1), "AudioSeconds=3", "AudioThreshold=0.1",
+                "[General]", "AutoSwitch=1", "CurrentMode=" + current, "AudioSeconds=3", "AudioThreshold=0.1",
             };
-            var legacy = new List<string> { "[LegacySwitch]", "HomeMode=1", "AwayMode=2", "IdleMinutes=5" };
-            foreach (string line in extra) (IsLegacy(line) ? legacy : general).Add(line);
+            string conditions = "";
+            int n = 0;
+            foreach (string item in extra)
+            {
+                if (item.StartsWith("From=", StringComparison.Ordinal)) conditions += Cfg("[Switch." + ++n + "]") + item;
+                else general.Add(item);
+            }
 
             return new Harness(
-                Cfg(general.ToArray()) + Cfg(legacy.ToArray()) +
-                Cfg("[Mode.1]", "Name=遊玩") + Monitor(1, 1920, 1080) +
-                Cfg("[Mode.2]", "Name=省電") + Monitor(2, 1280, 720));
+                Cfg(general.ToArray()) + conditions +
+                Mode(Play, "遊玩", 1920, 1080) + Mode(Save, "省電", 1280, 720) + Mode(AllOff, "全關", 800, 600));
         }
+
+        /// <summary>
+        /// <see cref="Modes"/> 加上與舊版相同的兩條切換條件：「遊玩」閒置 5 分鐘（滑鼠或鍵盤、聲音）→「省電」；
+        /// 「省電」偵測到使用（滑鼠或鍵盤、聲音）→「遊玩」。
+        /// </summary>
+        public static Harness PlayAndSave(int current, params string[] extra) =>
+            Modes(current, extra.Concat(new[]
+            {
+                Sw.Idle(Play, Save, 5, Sw.Both),
+                Sw.Usage(Save, Play, Sw.Both),
+            }).ToArray());
     }
 }

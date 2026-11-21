@@ -6,7 +6,7 @@ namespace AutoDisplayMode.Core
 {
     /// <summary>
     /// 應用程式協調者：核心對外的單一入口，也是唯一的測試接縫。
-    /// 負責閒置判斷、聲音持續判斷、緩衝期、手動切換、套用模式與 cfg 讀寫；
+    /// 負責依切換條件自動切換（閒置計時、聲音持續判斷、緩衝期、鉤子需求）、手動切換、套用模式與 cfg 讀寫；
     /// 透過 Ports.cs 中的介面與 Windows 轉接層互動。
     /// </summary>
     /// <remarks>所有方法都必須在同一個（UI）執行緒上呼叫。</remarks>
@@ -34,10 +34,11 @@ namespace AutoDisplayMode.Core
         readonly INotifier notifier;
 
         AppConfig config;
-        long lastUsageMs;     // 最後一次偵測到使用的時間
-        long ignoreUntilMs;   // 在這個時間之前不做自動切換（切換螢幕後的緩衝、失敗後的暫停）
-        int audioStreak;      // 連續偵測到聲音的秒數
-        uint lastInputTick;   // 「遊玩」模式用：Windows 最後輸入時間
+        long lastInputUsageMs;   // 最後一次「滑鼠或鍵盤」使用的時間（閒置用：Windows 最後輸入時間改變）
+        long lastAudioUsageMs;   // 最後一次「聲音」使用的時間（聲音持續達門檻秒數）
+        long ignoreUntilMs;      // 在這個時間之前不做自動切換（切換螢幕後的緩衝、失敗後的暫停）
+        int audioStreak;         // 連續偵測到聲音的秒數
+        uint lastInputTick;      // 上次看到的 Windows 最後輸入時間
         bool writesBlocked;   // cfg 讀取或舊版備份失敗：不寫入 cfg，避免覆蓋原本的內容
         string loadNote = ""; // 載入 cfg 時發生的事（轉移、備份失敗等），附加在下一則通知中
 
@@ -81,25 +82,24 @@ namespace AutoDisplayMode.Core
         /// <summary>目前模式的名稱。</summary>
         public string CurrentModeName => config.CurrentModeConfig?.Name ?? "";
 
-        /// <summary>舊版的兩條切換條件是否作用中（「遊玩」與「省電」都指向存在的模式）。</summary>
-        public bool LegacySwitchActive => config.HomeModeId != 0 && config.AwayModeId != 0;
-
-        /// <summary>目前狀態的摘要文字（通知用）。</summary>
-        public string StatusSummary => "目前：" + CurrentModeName + "｜自動切換：" + OnOff(config.AutoSwitch) + "\n" + LegacySwitchSummary;
-
-        /// <summary>舊版切換條件的摘要文字。</summary>
-        public string LegacySwitchSummary
+        /// <summary>目前狀態的摘要文字（通知用）：目前模式、自動切換、從目前模式出發的切換條件。</summary>
+        public string StatusSummary
         {
             get
             {
-                if (!LegacySwitchActive) return "舊版切換條件未設定（cfg 的 HomeMode／AwayMode）";
-                string home = config.FindMode(config.HomeModeId)!.Name, away = config.FindMode(config.AwayModeId)!.Name;
-                return "「" + home + "」閒置 " + config.IdleMinutes + " 分鐘 →「" + away + "」；「" + away + "」偵測到使用 →「" + home + "」" +
-                       "｜聲音偵測：" + OnOff(config.AudioDetect);
+                string head = "目前：" + CurrentModeName + "｜自動切換：" + OnOff(config.AutoSwitch) + "\n";
+                List<SwitchCondition> from = ConditionsFromCurrentMode().ToList();
+                return from.Count == 0
+                    ? head + "沒有從「" + CurrentModeName + "」出發的切換條件"
+                    : head + string.Join("\n", from.Select(s => s.Describe(config)));
             }
         }
 
         static string OnOff(bool b) => b ? "開" : "關";
+
+        /// <summary>來源模式等於目前模式的切換條件（依表格順序）。</summary>
+        IEnumerable<SwitchCondition> ConditionsFromCurrentMode() =>
+            config.SwitchConditions.Where(s => s.FromModeId == config.CurrentModeId);
 
         // ------------------------------------------------------------
         //  啟動與每秒檢查
@@ -109,63 +109,73 @@ namespace AutoDisplayMode.Core
         public void Start()
         {
             long now = clock.NowMs;
-            lastUsageMs = now;
             ignoreUntilMs = now + StartupGraceMs;
-            lastInputTick = signals.LastInputTick;
+            ResetUsageTracking(now);
             notifier.Notify("省電螢幕工具已啟動。\n" + TakeLoadNote() + StatusSummary, NotificationKind.Info);
         }
 
-        /// <summary>每秒呼叫一次。</summary>
+        /// <summary>
+        /// 每秒呼叫一次：更新使用跡象，再依表格順序檢查來源模式等於目前模式的切換條件，第一條成立的就切換。
+        /// </summary>
         public void Tick()
         {
             long now = clock.NowMs;
-            Mode? role = config.LegacyRoleOf(config.CurrentModeId);
 
-            // 聲音：連續超過 AudioSeconds 秒才算
-            bool sound = config.AudioDetect && signals.ReadAudioPeak() > config.AudioThreshold;
+            // 聲音：峰值超過門檻且連續超過 AudioSeconds 秒才算一次使用（過濾通知音這類短暫聲音）
+            bool sound = signals.ReadAudioPeak() > config.AudioThreshold;
             audioStreak = sound ? audioStreak + 1 : 0;
-            bool usage = audioStreak > config.AudioSeconds;
+            bool audioUsage = audioStreak > config.AudioSeconds;
+            if (audioUsage) lastAudioUsageMs = now;
 
-            bool mouse = signals.TakeMouseUsage();
-            if (role == Mode.Away)
+            // 滑鼠或鍵盤（閒置用）：Windows 最後輸入時間，不需鉤子
+            uint t = signals.LastInputTick;
+            if (t != lastInputTick)
             {
-                // 「省電」模式：只看實體滑鼠（低階滑鼠鉤子，可分辨遠端軟體送出的輸入）
-                if (mouse) usage = true;
+                lastInputTick = t;
+                lastInputUsageMs = now;
             }
-            else
-            {
-                // 其他模式：看 Windows 最後輸入時間（不掛鉤子，不影響遊戲滑鼠延遲）
-                uint t = signals.LastInputTick;
-                if (t != lastInputTick)
-                {
-                    lastInputTick = t;
-                    usage = true;
-                }
-            }
-            if (usage) lastUsageMs = now;
+
+            // 滑鼠或鍵盤（偵測到使用用）：鉤子（經移動門檻與遠端過濾），只在需要時安裝
+            bool hookUsage = signals.TakeHookUsage();
 
             ApplyHookPolicy();
 
-            if (!config.AutoSwitch || IsSwitching || now < ignoreUntilMs || !LegacySwitchActive) return;
+            if (!config.AutoSwitch || IsSwitching || now < ignoreUntilMs) return;
 
-            if (role == Mode.Away)
+            foreach (SwitchCondition s in ConditionsFromCurrentMode())
             {
-                ModeConfig home = config.FindMode(config.HomeModeId)!;
-                if (usage) SwitchTo(home, manual: false, "偵測到使用，已自動切換到「" + home.Name + "」。");
-            }
-            else if (role == Mode.Home && now - lastUsageMs >= config.IdleMinutes * 60_000L)
-            {
-                ModeConfig away = config.FindMode(config.AwayModeId)!;
-                SwitchTo(away, manual: false, "閒置 " + config.IdleMinutes + " 分鐘，已自動切換到「" + away.Name + "」。");
+                ModeConfig? target = config.FindMode(s.ToModeId);
+                if (target == null || !IsSatisfied(s, now, hookUsage, audioUsage)) continue;
+                string text = s.Kind == SwitchConditionKind.Idle
+                    ? s.DescribeCondition() + "，已自動切換到「" + target.Name + "」。"
+                    : "偵測到使用，已自動切換到「" + target.Name + "」。";
+                SwitchTo(target, manual: false, text);
+                return;
             }
         }
 
-        // 只在「自動切換開 + 處於『省電』模式 + 舊版切換條件作用中」時掛滑鼠鉤子，其他模式完全不掛
+        /// <summary>
+        /// 閒置：所選的使用來源全部都沒有使用，持續指定的時間。
+        /// 偵測到使用：所選的使用來源任一個在這一秒出現使用。
+        /// </summary>
+        bool IsSatisfied(SwitchCondition s, long now, bool hookUsage, bool audioUsage)
+        {
+            bool input = s.Uses(UsageSources.MouseKeyboard), audio = s.Uses(UsageSources.Audio);
+            if (s.Kind == SwitchConditionKind.UsageDetected) return (input && hookUsage) || (audio && audioUsage);
+            if (!input && !audio) return false;
+            long lastUsage = Math.Max(input ? lastInputUsageMs : long.MinValue, audio ? lastAudioUsageMs : long.MinValue);
+            return now - lastUsage >= s.IdleMs;
+        }
+
+        /// <summary>
+        /// 只在「自動切換開 + 沒有在切換 + 目前模式是某條『偵測到使用 + 滑鼠或鍵盤』切換條件的來源模式」時安裝滑鼠與鍵盤鉤子，
+        /// 其他情況完全不掛（不影響遊戲的輸入延遲）。
+        /// </summary>
         void ApplyHookPolicy()
         {
-            bool need = config.AutoSwitch && LegacySwitchActive && !IsSwitching
-                && config.LegacyRoleOf(config.CurrentModeId) == Mode.Away;
-            signals.ApplyHookPolicy(new MouseHookPolicy(need, ignoreUntilMs, config.MouseMoveThreshold, config.IgnoreRemoteInput));
+            bool need = config.AutoSwitch && !IsSwitching && ConditionsFromCurrentMode().Any(s =>
+                s.Kind == SwitchConditionKind.UsageDetected && s.Uses(UsageSources.MouseKeyboard));
+            signals.ApplyHookPolicy(new InputHookPolicy(need, ignoreUntilMs, config.MouseMoveThreshold, config.IgnoreRemoteInput));
         }
 
         // ------------------------------------------------------------
@@ -282,32 +292,18 @@ namespace AutoDisplayMode.Core
             OnChanged();
         }
 
-        public void SetIdleMinutes(int minutes)
-        {
-            config.IdleMinutes = minutes;
-            Save();
-            OnChanged();
-        }
-
-        public void SetAudioDetect(bool on)
-        {
-            config.AudioDetect = on;
-            Save();
-            audioStreak = 0;
-            OnChanged();
-        }
-
-        /// <summary>閒置計時歸零，並清除短期的使用跡象。</summary>
+        /// <summary>所有閒置計時歸零，並清除短期的使用跡象。</summary>
         void ResetUsageTracking(long now)
         {
-            lastUsageMs = now;
+            lastInputUsageMs = now;
+            lastAudioUsageMs = now;
             ResetShortTermTracking();
         }
 
-        /// <summary>清除累積的滑鼠使用、聲音持續秒數與最後輸入時間的比較基準（閒置計時不變）。</summary>
+        /// <summary>清除鉤子累積的使用、聲音持續秒數與最後輸入時間的比較基準（閒置計時不變）。</summary>
         void ResetShortTermTracking()
         {
-            signals.ResetMouseTracking();
+            signals.ResetHookTracking();
             audioStreak = 0;
             lastInputTick = signals.LastInputTick;
         }
@@ -436,15 +432,16 @@ namespace AutoDisplayMode.Core
             }
             else
             {
-                c = ConfigFile.Parse(text);
-                // 新格式且有模式時啟動不改寫；但有過時的鍵時立即改寫，避免手動編輯時看到舊鍵、轉移結果只存在記憶體中
+                ConfigFile.ParseResult parsed = ConfigFile.Parse(text);
+                c = parsed.Config;
+                loadNote += parsed.Note;
+                // 新格式且有模式時啟動不改寫；但有過時的內容（舊版切換條件、bat 設定）時立即改寫，
+                // 避免手動編輯時看到舊的內容、轉換結果只存在記憶體中
                 bool noModes = c.Modes.Count == 0;
-                save = noModes || c.HasObsoleteKeys;
+                save = noModes || parsed.RewriteNeeded;
                 if (noModes) AddDefaultMode(c, DetectForNewMode());
-                else if (c.HasObsoleteKeys) loadNote += "已將設定檔更新為新版格式（移除 bat 設定，LastMode 改為 HomeMode／AwayMode）。\n";
             }
 
-            ConfigFile.ResolveLegacyRoles(c);
             if (save) Save(c);
             return c;
         }

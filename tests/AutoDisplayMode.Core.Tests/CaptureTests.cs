@@ -227,7 +227,6 @@ namespace AutoDisplayMode.Core.Tests
             var lines = new System.Collections.Generic.List<string>
             {
                 "[General]", "CurrentMode=" + currentMode,
-                "[LegacySwitch]", "LastMode=home",
                 "[Mode.1]", "Name=遊玩",
             };
             for (int i = 0; i < monitorSections.Length; i++)

@@ -6,7 +6,7 @@ namespace AutoDisplayMode.Core.Tests
 {
     public class ConfigTests
     {
-        /// <summary>手寫的新格式 cfg：非預設的一般設定、兩個模式、各種螢幕設定。</summary>
+        /// <summary>手寫的新格式 cfg：非預設的一般設定、兩條切換條件（分段序號與檔案中的順序相反）、兩個模式、各種螢幕設定。</summary>
         static readonly string Handwritten = Harness.Cfg(
             "# 使用者的註解",
             "[General]",
@@ -19,11 +19,21 @@ namespace AutoDisplayMode.Core.Tests
             "ShowNotifications=0",
             "StartWithWindows=1",
             "",
-            "[LegacySwitch]",
-            "HomeMode=3",
-            "AwayMode=7",
-            "IdleMinutes=30",
-            "AudioDetect=0",
+            "[Switch.20]",
+            "From=7",
+            "Condition=usagedetected",
+            "MouseKeyboard=1",
+            "Audio=1",
+            "To=3",
+            "",
+            "[Switch.10]",
+            "From=3",
+            "Condition=Idle",
+            "IdleTime=2",
+            "IdleUnit=hours",
+            "MouseKeyboard=0",
+            "Audio=1",
+            "To=7",
             "",
             "[Mode.3]",
             "Name=遊玩",
@@ -80,9 +90,19 @@ namespace AutoDisplayMode.Core.Tests
             Assert.False(c.IgnoreRemoteInput);
             Assert.False(c.ShowNotifications);
             Assert.True(c.StartWithWindows);
-            Assert.Equal(30, c.IdleMinutes);
-            Assert.False(c.AudioDetect);
-            Assert.Equal((3, 7), (c.HomeModeId, c.AwayModeId));
+            Assert.Equal(new[]   // 依分段序號排序，而不是檔案中的順序
+            {
+                new SwitchCondition
+                {
+                    FromModeId = 3, Kind = SwitchConditionKind.Idle, IdleAmount = 2, IdleUnit = IdleUnit.Hours,
+                    Sources = UsageSources.Audio, ToModeId = 7,
+                },
+                new SwitchCondition
+                {
+                    FromModeId = 7, Kind = SwitchConditionKind.UsageDetected,
+                    Sources = UsageSources.MouseKeyboard | UsageSources.Audio, ToModeId = 3,
+                },
+            }, c.SwitchConditions);
 
             Assert.Equal(new[] { (3, "遊玩"), (7, "省電") }, c.Modes.Select(m => (m.Id, m.Name)));
             Assert.Equal((0x12AB0F, ManualAutoSwitch.On, UnlistedMonitors.Off),
@@ -102,11 +122,11 @@ namespace AutoDisplayMode.Core.Tests
         public void cfg寫出再讀回結果相同()
         {
             var first = new Harness(Handwritten);
-            first.App.SetAudioDetect(false);   // 觸發整份重寫
+            first.App.SetAutoSwitch(false);   // 觸發整份重寫
             string written = first.Store.Text!;
 
             var second = new Harness(written);
-            second.App.SetAudioDetect(false);
+            second.App.SetAutoSwitch(false);
 
             Assert.Equal(written, second.Store.Text);
             Assert.Equal(Describe(first.App.Config), Describe(second.App.Config));
@@ -124,6 +144,12 @@ namespace AutoDisplayMode.Core.Tests
             Assert.Contains("# 自動切換總開關（1=開，0=關）\r\nAutoSwitch=1\r\n", h.Store.Text);
             Assert.Contains("#  模式「遊玩」\r\n", h.Store.Text);
             Assert.Contains("[Mode.3.Monitor.2]\r\nMonitor=GSM/5B7F/PORT:HDMI1\r\n", h.Store.Text);
+            Assert.Contains(
+                "# 切換條件 1：「遊玩」閒置 2 小時（聲音）→「省電」\r\n[Switch.1]\r\nFrom=3\r\nCondition=Idle\r\n" +
+                "IdleTime=2\r\nIdleUnit=Hours\r\nMouseKeyboard=0\r\nAudio=1\r\nTo=7\r\n", h.Store.Text);
+            Assert.Contains(   // 偵測到使用不寫閒置時間
+                "# 切換條件 2：「省電」偵測到使用（滑鼠或鍵盤、聲音）→「遊玩」\r\n[Switch.2]\r\nFrom=7\r\nCondition=UsageDetected\r\n" +
+                "MouseKeyboard=1\r\nAudio=1\r\nTo=3\r\n", h.Store.Text);
             Assert.DoesNotContain("# 使用者的註解", h.Store.Text);
         }
 
@@ -132,7 +158,6 @@ namespace AutoDisplayMode.Core.Tests
         {
             var h = new Harness(Harness.Cfg(
                 "[General]", "AudioSeconds=-1", "MouseMoveThreshold=0", "AutoSwitch=maybe", "CurrentMode=99",
-                "[LegacySwitch]", "IdleMinutes=0", "HomeMode=99", "AwayMode=abc",
                 "[Mode.2]", "Name=甲", "Color=red", "ManualAutoSwitch=Sometimes", "UnlistedMonitors=2",
                 "[Mode.2.Monitor.1]", "Monitor=亂寫", "Enabled=1",
                 "[Mode.2.Monitor.2]", "Monitor=DEL/A0F4/SN:1", "Orientation=Sideways", "Width=abc",
@@ -143,8 +168,6 @@ namespace AutoDisplayMode.Core.Tests
             Assert.Equal(3, c.AudioSeconds);
             Assert.Equal(1, c.MouseMoveThreshold);
             Assert.True(c.AutoSwitch);
-            Assert.Equal(10, c.IdleMinutes);
-            Assert.Equal((0, 0), (c.HomeModeId, c.AwayModeId));   // 指向不存在的模式時清除
             Assert.Equal(2, c.CurrentModeId);   // 找不到的模式改用第一個
             Assert.Equal(new[] { "甲", "模式 5" }, c.Modes.Select(m => m.Name));
             var m = Assert.Single(c.Modes[0].Monitors);   // 識別無法解析的螢幕設定略過
@@ -152,6 +175,35 @@ namespace AutoDisplayMode.Core.Tests
             Assert.Equal((ModeConfig.Palette[0], ManualAutoSwitch.Keep, UnlistedMonitors.Keep),
                 (c.Modes[0].Color, c.Modes[0].ManualAutoSwitch, c.Modes[0].UnlistedMonitors));
             Assert.Equal(ModeConfig.Palette[1], c.Modes[1].Color);
+        }
+
+        [Fact]
+        public void 無效的切換條件略過並在啟動通知中說明原因()
+        {
+            var h = new Harness(Harness.Cfg(
+                "[Switch.1]", "From=1", "Condition=Idle", "IdleTime=0", "To=2",
+                "[Switch.2]", "From=1", "To=1",
+                "[Switch.3]", "From=1", "To=99",
+                "[Switch.4]", "From=abc", "To=2",
+                "[Switch.5]", "From=1", "MouseKeyboard=0", "Audio=0", "To=2",
+                "[Switch.6]", "From=1", "Condition=Sometimes", "IdleTime=5", "To=2",       // 無法辨識的條件類型不當成閒置
+                "[Switch.7]", "From=2", "Condition=UsageDetected", "IdleTime=abc", "To=1",   // 偵測到使用不看閒置時間
+                "[Switch.8]", "From=1", "Condition=Idle", "To=2",                            // 沒寫的用預設值
+                "[Mode.1]", "Name=甲", "[Mode.2]", "Name=乙"));
+
+            Assert.Equal(new[]
+            {
+                new SwitchCondition { FromModeId = 2, Kind = SwitchConditionKind.UsageDetected, Sources = UsageSources.MouseKeyboard, ToModeId = 1 },
+                new SwitchCondition { FromModeId = 1, Kind = SwitchConditionKind.Idle, IdleAmount = 10, Sources = UsageSources.MouseKeyboard, ToModeId = 2 },
+            }, h.App.Config.SwitchConditions);
+            string note = Assert.Single(h.Notifier.Shown).Text;
+            Assert.Contains("已略過無效的切換條件 [Switch.1]：閒置時間必須是正整數。\n", note);
+            Assert.Contains("已略過無效的切換條件 [Switch.2]：來源模式與目標模式相同。\n", note);
+            Assert.Contains("已略過無效的切換條件 [Switch.3]：目標模式不存在。\n", note);
+            Assert.Contains("已略過無效的切換條件 [Switch.4]：來源模式不存在。\n", note);
+            Assert.Contains("已略過無效的切換條件 [Switch.5]：未選任何使用來源。\n", note);
+            Assert.Contains("已略過無效的切換條件 [Switch.6]：無法辨識的條件類型「Sometimes」（應為 Idle 或 UsageDetected）。\n", note);
+            Assert.Equal(0, h.Store.Writes);   // 不立即改寫：使用者可以修正後重新載入
         }
 
         [Fact]
@@ -202,14 +254,14 @@ namespace AutoDisplayMode.Core.Tests
         [Fact]
         public void cfg讀取失敗時使用預設值且不覆寫檔案()
         {
-            var store = new FakeStore(Harness.Cfg("[LegacySwitch]", "IdleMinutes=30")) { FailReads = true };
+            var store = new FakeStore(Harness.Cfg("[General]", "MouseMoveThreshold=30")) { FailReads = true };
             var clock = new FakeClock();
             var app = new AppCoordinator(store, new FakeMonitors(Harness.DefaultMonitor), new FakeSignals(clock),
                 clock, new FakeStartup(), new FakeNotifier());
 
             app.SetAutoSwitch(false);
 
-            Assert.Equal(10, app.Config.IdleMinutes);
+            Assert.Equal(10, app.Config.MouseMoveThreshold);
             Assert.Equal("預設", app.CurrentModeName);
             Assert.Equal(0, store.Writes);
         }
@@ -262,54 +314,82 @@ namespace AutoDisplayMode.Core.Tests
         }
 
         [Fact]
-        public void 舊版切換條件的值在過渡期間保留_bat相關的值捨棄()
+        public void 舊格式cfg的閒置分鐘_聲音偵測_上次模式與bat相關的值捨棄()
         {
             var h = new Harness(Legacy);
-            var c = new Harness(h.Store.Text).App.Config;
 
-            Assert.Equal(5, c.IdleMinutes);
-            Assert.False(c.AudioDetect);
-            Assert.Equal((0, c.CurrentModeId), (c.HomeModeId, c.AwayModeId));   // LastMode=away：「預設」模式扮演「省電」
-            Assert.DoesNotContain("BatPath", h.Store.Text);
-            Assert.DoesNotContain("HomeArgs", h.Store.Text);
-            Assert.DoesNotContain("AwayArgs", h.Store.Text);
-            Assert.DoesNotContain("LastMode", h.Store.Text);
+            Assert.Empty(h.App.Config.SwitchConditions);
+            foreach (string key in new[] { "BatPath", "HomeArgs", "AwayArgs", "LastMode", "IdleMinutes", "AudioDetect", "LegacySwitch", "\r\n[Switch." })
+                Assert.DoesNotContain(key, h.Store.Text);
+        }
+
+        // ---- 過渡用的舊版切換條件（票 03 的 [LegacySwitch]）----
+
+        [Fact]
+        public void 舊版切換條件啟動時就轉換為等效的切換條件並改寫cfg()
+        {
+            var h = new Harness(Harness.Cfg(
+                "[General]", "CurrentMode=1",
+                "[LegacySwitch]", "HomeMode=1", "AwayMode=2", "IdleMinutes=5", "AudioDetect=1",
+                "[Mode.1]", "Name=預設", "[Mode.2]", "Name=省電"));
+
+            var both = UsageSources.MouseKeyboard | UsageSources.Audio;
+            Assert.Equal(new[]
+            {
+                new SwitchCondition { FromModeId = 1, Kind = SwitchConditionKind.Idle, IdleAmount = 5, Sources = both, ToModeId = 2 },
+                new SwitchCondition { FromModeId = 2, Kind = SwitchConditionKind.UsageDetected, Sources = both, ToModeId = 1 },
+            }, h.App.Config.SwitchConditions);
+            Assert.Equal(1, h.Store.Writes);   // 啟動時就改寫，轉換結果不會只存在記憶體中
+            Assert.Contains("[Switch.1]\r\nFrom=1\r\nCondition=Idle\r\nIdleTime=5\r\nIdleUnit=Minutes\r\nMouseKeyboard=1\r\nAudio=1\r\nTo=2\r\n", h.Store.Text);
+            Assert.Contains("[Switch.2]\r\nFrom=2\r\nCondition=UsageDetected\r\nMouseKeyboard=1\r\nAudio=1\r\nTo=1\r\n", h.Store.Text);
+            foreach (string key in new[] { "LegacySwitch", "HomeMode", "AwayMode", "IdleMinutes", "AudioDetect" })
+                Assert.DoesNotContain(key, h.Store.Text);
+            Assert.Contains("已將舊版切換條件轉換為 2 條切換條件", Assert.Single(h.Notifier.Shown).Text);
+
+            var reread = new Harness(h.Store.Text);   // 改寫後的 cfg 不需要再改寫
+            Assert.Equal(h.App.Config.SwitchConditions, reread.App.Config.SwitchConditions);
+            Assert.Equal(0, reread.Store.Writes);
         }
 
         [Fact]
-        public void 票02格式的cfg啟動時就以LastMode轉移成舊版切換條件指向的模式並移除bat相關的鍵()
+        public void 舊版切換條件關閉聲音偵測時兩條切換條件都不選聲音()
+        {
+            var h = new Harness(Harness.Cfg(
+                "[LegacySwitch]", "HomeMode=2", "AwayMode=1", "IdleMinutes=30", "AudioDetect=0",
+                "[Mode.1]", "Name=甲", "[Mode.2]", "Name=乙"));
+
+            Assert.Equal(new[] { (2, UsageSources.MouseKeyboard, 1), (1, UsageSources.MouseKeyboard, 2) },
+                h.App.Config.SwitchConditions.Select(s => (s.FromModeId, s.Sources, s.ToModeId)));
+            Assert.Equal(30, h.App.Config.SwitchConditions[0].IdleAmount);
+        }
+
+        [Fact]
+        public void 舊版切換條件沒有指向兩個不同的模式時不轉換但仍移除()
+        {
+            foreach (string[] roles in new[] { new[] { "HomeMode=1", "AwayMode=1" }, new[] { "HomeMode=1", "AwayMode=0" }, new[] { "HomeMode=1" } })
+            {
+                var h = new Harness(Harness.Cfg("[LegacySwitch]") + Harness.Cfg(roles) + Harness.Cfg("[Mode.1]", "Name=甲", "[Mode.2]", "Name=乙"));
+
+                Assert.Empty(h.App.Config.SwitchConditions);
+                Assert.Equal(1, h.Store.Writes);
+                Assert.DoesNotContain("LegacySwitch", h.Store.Text);
+                Assert.Contains("已移除舊版切換條件", Assert.Single(h.Notifier.Shown).Text);
+            }
+        }
+
+        [Fact]
+        public void 票02格式的cfg啟動時就移除bat相關的鍵與LastMode()
         {
             var h = new Harness(Harness.Cfg(
                 "[General]", "CurrentMode=4",
                 "[LegacySwitch]", "BatPath=C:\\m.bat", "HomeArgs=home", "AwayArgs=away", "IdleMinutes=7", "LastMode=home",
                 "[Mode.4]", "Name=預設"));
 
-            Assert.Equal((4, 0), (h.App.Config.HomeModeId, h.App.Config.AwayModeId));
-            Assert.Equal(1, h.Store.Writes);   // 啟動時就改寫，不必等下次存檔
-            Assert.Contains("HomeMode=4\r\nAwayMode=0\r\n", h.Store.Text);
-            Assert.Contains("IdleMinutes=7\r\n", h.Store.Text);
-            Assert.DoesNotContain("BatPath", h.Store.Text);
-            Assert.DoesNotContain("LastMode", h.Store.Text);
-            Assert.Contains("已將設定檔更新為新版格式", Assert.Single(h.Notifier.Shown).Text);
-        }
-
-        [Fact]
-        public void 只有bat相關的過時鍵時啟動也會改寫()
-        {
-            var h = new Harness(Harness.Cfg(
-                "[LegacySwitch]", "HomeMode=1", "AwayMode=2", "BatPath=C:\\m.bat", "[Mode.1]", "Name=甲", "[Mode.2]", "Name=乙"));
-
+            Assert.Empty(h.App.Config.SwitchConditions);   // 只有一個模式：舊版的兩條切換條件本來就不作用
             Assert.Equal(1, h.Store.Writes);
-            Assert.DoesNotContain("BatPath", h.Store.Text);
-            Assert.Equal((1, 2), (h.App.Config.HomeModeId, h.App.Config.AwayModeId));
-        }
-
-        [Fact]
-        public void 舊版切換條件的兩個角色指向同一個模式時清除省電()
-        {
-            var h = new Harness(Harness.Cfg("[LegacySwitch]", "HomeMode=1", "AwayMode=1", "[Mode.1]", "Name=甲"));
-
-            Assert.Equal((1, 0), (h.App.Config.HomeModeId, h.App.Config.AwayModeId));
+            foreach (string key in new[] { "BatPath", "HomeArgs", "AwayArgs", "LastMode", "IdleMinutes", "LegacySwitch" })
+                Assert.DoesNotContain(key, h.Store.Text);
+            Assert.Contains("已移除不再使用的設定（bat 設定、LastMode）。", Assert.Single(h.Notifier.Shown).Text);
         }
 
         [Fact]
@@ -336,13 +416,9 @@ namespace AutoDisplayMode.Core.Tests
         {
             var h = new Harness(Handwritten);
 
-            h.App.SetIdleMinutes(10);
-            h.App.SetAudioDetect(true);
             h.App.SetAutoSwitch(true);
 
             var c = new Harness(h.Store.Text).App.Config;
-            Assert.Equal(10, c.IdleMinutes);
-            Assert.True(c.AudioDetect);
             Assert.True(c.AutoSwitch);
         }
 
@@ -359,30 +435,20 @@ namespace AutoDisplayMode.Core.Tests
             Assert.Equal(3, c.CurrentModeId);
         }
 
-        [Fact]
-        public void 修改閒置時間後以新的時間判斷()
-        {
-            var h = Harness.TwoModes("home", "IdleMinutes=10");
-
-            h.App.SetIdleMinutes(5);
-
-            Assert.Equal(5 * 60, h.RunUntilSwitch(20 * 60));
-        }
-
         // ---- 重新載入 ----
 
         [Fact]
         public void 重新載入cfg套用新設定但維持目前模式()
         {
-            var h = Harness.TwoModes("home", "IdleMinutes=10");
-            h.Store.Text = Harness.Cfg("[General]", "CurrentMode=2", "[LegacySwitch]", "HomeMode=1", "AwayMode=2", "IdleMinutes=5",
+            var h = Harness.Modes(Harness.Play, Sw.Idle(Harness.Play, Harness.Save, 10));
+            h.Store.Text = Harness.Cfg("[General]", "CurrentMode=2", "[Switch.1]") + Sw.Idle(1, 2, 5) + Harness.Cfg(
                 "[Mode.1]", "Name=甲", "[Mode.2]", "Name=乙",
                 "[Mode.2.Monitor.1]", "Monitor=" + Harness.DefaultMonitor.Id, "Enabled=1", "Primary=1");
 
             h.App.ReloadConfig();
 
             Assert.Equal(1, h.App.Config.CurrentModeId);   // 程式記錄的目前模式仍存在：維持
-            Assert.Equal(5, h.App.Config.IdleMinutes);
+            Assert.Equal(5, Assert.Single(h.App.Config.SwitchConditions).IdleAmount);
             Assert.Equal(new[] { "甲", "乙" }, h.App.Config.Modes.Select(m => m.Name));
             Assert.Empty(h.Monitors.Applied);
             Assert.Contains(h.Notifier.Shown, n => n.Kind == NotificationKind.Info && n.Text.StartsWith("已重新載入設定檔。"));
@@ -393,7 +459,7 @@ namespace AutoDisplayMode.Core.Tests
         [Fact]
         public void 重新載入後程式記錄的目前模式不存在時改用cfg的目前模式()
         {
-            var h = Harness.TwoModes("away");
+            var h = Harness.Modes(Harness.Save);
             h.Store.Text = Harness.Cfg("[General]", "CurrentMode=5", "[Mode.5]", "Name=新", "[Mode.6]", "Name=另一個");
 
             h.App.ReloadConfig();
@@ -416,22 +482,23 @@ namespace AutoDisplayMode.Core.Tests
         [Fact]
         public void 啟動時跳出目前狀態通知()
         {
-            var h = new Harness(Harness.Cfg(
-                "[General]", "AutoSwitch=0", "CurrentMode=2",
-                "[LegacySwitch]", "HomeMode=1", "AwayMode=2", "IdleMinutes=30", "AudioDetect=1",
-                "[Mode.1]", "Name=甲", "[Mode.2]", "Name=乙"));
+            var h = new Harness(Harness.Cfg("[General]", "AutoSwitch=0", "CurrentMode=2", "[Switch.1]") + Sw.Idle(1, 2, 30) +
+                Harness.Cfg("[Switch.2]") + Sw.Usage(2, 1, Sw.Both) +
+                Harness.Cfg("[Switch.3]") + Sw.Idle(2, 3, 1, Sw.MouseOrKeyboard, IdleUnit.Hours) +
+                Harness.Cfg("[Mode.1]", "Name=甲", "[Mode.2]", "Name=乙", "[Mode.3]", "Name=丙"));
 
-            Assert.Equal(("省電螢幕工具已啟動。\n目前：乙｜自動切換：關\n「甲」閒置 30 分鐘 →「乙」；「乙」偵測到使用 →「甲」｜聲音偵測：開",
+            Assert.Equal(("省電螢幕工具已啟動。\n目前：乙｜自動切換：關\n" +   // 只列出從目前模式出發的切換條件
+                          "「乙」偵測到使用（滑鼠或鍵盤、聲音）→「甲」\n「乙」閒置 1 小時（滑鼠或鍵盤）→「丙」",
                     NotificationKind.Info),
                 Assert.Single(h.Notifier.Shown));
         }
 
         [Fact]
-        public void 啟動通知說明舊版切換條件未設定()
+        public void 啟動通知說明沒有從目前模式出發的切換條件()
         {
             var h = new Harness(Harness.Cfg("[General]", "AutoSwitch=1", "[Mode.1]", "Name=預設"));
 
-            Assert.Equal("省電螢幕工具已啟動。\n目前：預設｜自動切換：開\n舊版切換條件未設定（cfg 的 HomeMode／AwayMode）",
+            Assert.Equal("省電螢幕工具已啟動。\n目前：預設｜自動切換：開\n沒有從「預設」出發的切換條件",
                 Assert.Single(h.Notifier.Shown).Text);
         }
 
@@ -463,11 +530,11 @@ namespace AutoDisplayMode.Core.Tests
             Assert.Contains(("無法修改開機啟動設定：拒絕存取", NotificationKind.Error), h.Notifier.Shown);
         }
 
-        /// <summary>把設定轉成可比較的文字（一般設定、舊版切換、每個模式與螢幕設定）。</summary>
+        /// <summary>把設定轉成可比較的文字（一般設定、切換條件、每個模式與螢幕設定）。</summary>
         static string Describe(AppConfig c) =>
             string.Join("|", c.AutoSwitch, c.CurrentModeId, c.MouseMoveThreshold, c.AudioThreshold, c.AudioSeconds,
-                c.IgnoreRemoteInput, c.ShowNotifications, c.StartWithWindows,
-                c.IdleMinutes, c.AudioDetect, c.HomeModeId, c.AwayModeId) +
+                c.IgnoreRemoteInput, c.ShowNotifications, c.StartWithWindows) +
+            string.Concat(c.SwitchConditions.Select(s => "\n" + s)) +
             string.Concat(c.Modes.Select(m => "\n" + m.Id + ":" + m.Name + ":" + m.Color + ":" + m.ManualAutoSwitch + ":" + m.UnlistedMonitors +
                 string.Concat(m.Monitors.Select(s => "\n  " + s))));
     }

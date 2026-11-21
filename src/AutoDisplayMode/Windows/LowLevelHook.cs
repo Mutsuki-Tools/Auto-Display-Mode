@@ -3,10 +3,11 @@ using System.Runtime.InteropServices;
 
 namespace AutoDisplayMode.Windows
 {
-    /// <summary>低階滑鼠鉤子（只在核心要求時掛上）。</summary>
-    sealed class MouseHook
+    /// <summary>低階滑鼠或鍵盤鉤子（只在核心要求時掛上）。</summary>
+    sealed class LowLevelHook
     {
-        public delegate void MouseCallback(int message, int x, int y, uint flags);
+        /// <summary>收到一筆輸入：視窗訊息（WM_MOUSEMOVE、WM_KEYDOWN 等）與 MSLLHOOKSTRUCT／KBDLLHOOKSTRUCT 的指標。</summary>
+        public delegate void Callback(int message, IntPtr data);
         delegate IntPtr HookProc(int nCode, IntPtr wParam, IntPtr lParam);
 
         [DllImport("user32.dll", SetLastError = true)]
@@ -21,14 +22,18 @@ namespace AutoDisplayMode.Windows
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
         static extern IntPtr GetModuleHandle(string? lpModuleName);
 
-        const int WH_MOUSE_LL = 14;
+        public const int WH_KEYBOARD_LL = 13;
+        public const int WH_MOUSE_LL = 14;
 
+        readonly int hookType;
         readonly HookProc proc;          // 保持參考，避免被 GC 回收
-        readonly MouseCallback callback;
+        readonly Callback callback;
         IntPtr handle = IntPtr.Zero;
 
-        public MouseHook(MouseCallback cb)
+        /// <param name="hookType"><see cref="WH_MOUSE_LL"/> 或 <see cref="WH_KEYBOARD_LL"/>。</param>
+        public LowLevelHook(int hookType, Callback cb)
         {
+            this.hookType = hookType;
             callback = cb;
             proc = HookCallback;
         }
@@ -38,7 +43,7 @@ namespace AutoDisplayMode.Windows
         public void Install()
         {
             if (handle != IntPtr.Zero) return;
-            handle = SetWindowsHookEx(WH_MOUSE_LL, proc, GetModuleHandle(null), 0);
+            handle = SetWindowsHookEx(hookType, proc, GetModuleHandle(null), 0);
         }
 
         public void Uninstall()
@@ -54,11 +59,7 @@ namespace AutoDisplayMode.Windows
             {
                 try
                 {
-                    // MSLLHOOKSTRUCT: pt.x(0) pt.y(4) mouseData(8) flags(12)
-                    int x = Marshal.ReadInt32(lParam, 0);
-                    int y = Marshal.ReadInt32(lParam, 4);
-                    uint flags = (uint)Marshal.ReadInt32(lParam, 12);
-                    callback(wParam.ToInt32(), x, y, flags);
+                    callback(wParam.ToInt32(), lParam);
                 }
                 catch
                 {

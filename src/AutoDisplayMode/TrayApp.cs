@@ -5,6 +5,7 @@ using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Globalization;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Windows.Forms;
 using AutoDisplayMode.Core;
@@ -16,7 +17,6 @@ namespace AutoDisplayMode
     sealed class TrayApp : ApplicationContext
     {
         const string AppTitle = "省電螢幕工具";
-        static readonly int[] IdleChoices = { 5, 10, 30, 60 };
 
         readonly AppCoordinator app;
         readonly WindowsUsageSignals signals;
@@ -26,11 +26,8 @@ namespace AutoDisplayMode
         readonly ToolStripSeparator modesEnd;
         readonly List<ToolStripMenuItem> modeItems = new();
         readonly ToolStripMenuItem miAuto;
-        readonly ToolStripMenuItem miIdle;
-        readonly ToolStripMenuItem miAudio;
         readonly ToolStripMenuItem miStartup;
         readonly ToolStripMenuItem miCapture;
-        readonly List<ToolStripMenuItem> idleItems = new();
         readonly Dictionary<(int Color, bool Filled), Icon> icons = new();
         readonly System.Windows.Forms.Timer timer;
 
@@ -60,19 +57,6 @@ namespace AutoDisplayMode
 
             miAuto = new ToolStripMenuItem("", null, delegate { app.SetAutoSwitch(!app.Config.AutoSwitch); });
 
-            miIdle = new ToolStripMenuItem("");
-            foreach (int minutes in IdleChoices)
-            {
-                var item = new ToolStripMenuItem(minutes + " 分鐘", null, delegate { app.SetIdleMinutes(minutes); })
-                {
-                    Tag = minutes,
-                };
-                idleItems.Add(item);
-                miIdle.DropDownItems.Add(item);
-            }
-
-            miAudio = new ToolStripMenuItem("", null, delegate { app.SetAudioDetect(!app.Config.AudioDetect); });
-
             miCapture = new ToolStripMenuItem("", null, delegate { ConfirmCapture(); });
 
             var miHelp = new ToolStripMenuItem("說明", null, delegate { ShowHelp(); });
@@ -87,8 +71,6 @@ namespace AutoDisplayMode
                 new ToolStripSeparator(),
                 modesEnd,
                 miAuto,
-                miIdle,
-                miAudio,
                 new ToolStripSeparator(),
                 miCapture,
                 new ToolStripSeparator(),
@@ -159,10 +141,6 @@ namespace AutoDisplayMode
             miStatus.Text = "目前：" + modeName + (target != null ? "（正在切換到「" + target + "」…）" : "");
             UpdateModeItems();
             miAuto.Text = "自動切換 [目前：" + OnOff(cfg.AutoSwitch) + "]";
-            miIdle.Text = LegacySwitchText("閒置切換的時間") + " [目前：" + cfg.IdleMinutes + " 分]";
-            foreach (ToolStripMenuItem item in idleItems)
-                item.Checked = (int)item.Tag == cfg.IdleMinutes;
-            miAudio.Text = "自動切換偵測聲音 [目前：" + OnOff(cfg.AudioDetect) + "]";
             miStartup.Text = "開機時自動開啟此程式 [目前：" + OnOff(app.StartupEnabled) + "]";
             miCapture.Text = "將目前螢幕狀態存入「" + modeName + "」…";
             miCapture.Enabled = !app.IsSwitching;
@@ -200,14 +178,6 @@ namespace AutoDisplayMode
             }
         }
 
-        /// <summary>舊版切換條件的選單文字：作用中時帶出模式名稱。</summary>
-        string LegacySwitchText(string what)
-        {
-            AppConfig cfg = app.Config;
-            if (!app.LegacySwitchActive) return "自動切換" + what;
-            return "「" + cfg.FindMode(cfg.HomeModeId)!.Name + "」" + what;
-        }
-
         void ShowBalloon(string text, ToolTipIcon icon) => tray.ShowBalloonTip(4000, AppTitle, text, icon);
 
         static string OnOff(bool b) => b ? "開" : "關";
@@ -215,6 +185,9 @@ namespace AutoDisplayMode
         void ShowHelp()
         {
             AppConfig cfg = app.Config;
+            string conditions = cfg.SwitchConditions.Count == 0
+                ? "・（尚未設定任何切換條件）\n"
+                : string.Concat(cfg.SwitchConditions.Select((s, i) => "・" + (i + 1) + ". " + s.Describe(cfg) + "\n"));
             string help =
                 "【模式】\n" +
                 "・右鍵選單列出所有模式，目前模式打勾；點一下即手動切換，依該模式記錄的螢幕設定套用。\n" +
@@ -223,16 +196,18 @@ namespace AutoDisplayMode
                 "・手動切換進入模式時，自動切換依模式的 ManualAutoSwitch 設定維持、開啟或關閉。\n" +
                 "・模式目前只能在cfg檔中新增與修改。\n\n" +
                 "【自動切換】由選單或cfg檔設定[當前為" + OnOff(cfg.AutoSwitch) + "]\n" +
-                "・" + app.LegacySwitchSummary + "\n" +
-                "・扮演「遊玩」與「省電」的模式由cfg檔的 HomeMode／AwayMode 設定；處於其他模式時不自動切換。\n" +
-                "・「省電」模式中，偵測到實體滑鼠移動或點擊，或電腦連續播放聲音，就切換到「遊玩」模式。\n" +
-                "・「遊玩」模式中，沒有任何鍵盤滑鼠操作、也沒有持續播放聲音，超過閒置時間後切換到「省電」模式。\n" +
-                "・閒置時間由選單或cfg檔設定[當前為" + cfg.IdleMinutes + "分鐘]\n" +
-                "・聲音偵測由選單或cfg檔設定[當前為" + OnOff(cfg.AudioDetect) + "]\n" +
+                "・依cfg檔的切換條件（[Switch.N]）自動切換：只檢查來源模式等於目前模式的切換條件，由上往下第一條成立的就切換。\n" +
+                "・閒置：所選的使用來源全部都沒有使用，持續指定的分鐘或小時。\n" +
+                "・偵測到使用：所選的使用來源任一個出現使用就成立。\n" +
+                "・使用來源可複選「滑鼠或鍵盤」與「聲音」；聲音要連續播放達門檻秒數才算使用（通知音這類短暫聲音不算）。\n" +
+                "・只有目前模式有「偵測到使用＋滑鼠或鍵盤」的切換條件時才掛滑鼠與鍵盤鉤子，其他模式完全不掛。\n" +
+                "・每次切換完成後所有閒置計時歸零，並有 10 秒緩衝期。\n" +
+                "目前的切換條件：\n" +
+                conditions +
                 "・聲音需連續播放的秒數由cfg檔設定[當前為" + cfg.AudioSeconds + "秒]\n" +
                 "・聲音音量門檻由cfg檔設定[當前為" + cfg.AudioThreshold.ToString(CultureInfo.InvariantCulture) + "]\n" +
                 "・滑鼠移動門檻由cfg檔設定[當前為" + cfg.MouseMoveThreshold + "像素]\n" +
-                "・「省電」模式中忽略遠端連線軟體的滑鼠輸入，由cfg檔設定[當前為" + OnOff(cfg.IgnoreRemoteInput) + "]\n" +
+                "・偵測到使用時忽略遠端連線軟體送出的滑鼠或鍵盤輸入，由cfg檔設定[當前為" + OnOff(cfg.IgnoreRemoteInput) + "]\n" +
                 "・自動切換時跳出通知，由cfg檔設定[當前為" + OnOff(cfg.ShowNotifications) + "]\n\n" +
                 "【擷取】\n" +
                 "・選單「將目前螢幕狀態存入「" + app.CurrentModeName + "」…」會把目前每台螢幕的狀態存進目前模式（cfg檔）。\n\n" +

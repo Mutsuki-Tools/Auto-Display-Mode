@@ -339,8 +339,13 @@ namespace AutoDisplayMode.Core
 
         public static void Normalize(AppConfig c)
         {
-            if (c.AudioSeconds < 1) c.AudioSeconds = 3;
-            if (c.MouseMoveThreshold < 1) c.MouseMoveThreshold = 1;
+            // 範圍與設定視窗的欄位一致（AppConfig.ValidateGeneral）
+            if (c.AudioSeconds < AppConfig.MinAudioSeconds) c.AudioSeconds = AppConfig.DefaultAudioSeconds;
+            if (c.AudioSeconds > AppConfig.MaxAudioSeconds) c.AudioSeconds = AppConfig.MaxAudioSeconds;
+            if (c.MouseMoveThreshold < AppConfig.MinMouseMoveThreshold) c.MouseMoveThreshold = AppConfig.MinMouseMoveThreshold;
+            if (c.MouseMoveThreshold > AppConfig.MaxMouseMoveThreshold) c.MouseMoveThreshold = AppConfig.MaxMouseMoveThreshold;
+            if (!(c.AudioThreshold >= AppConfig.MinAudioThreshold && c.AudioThreshold <= AppConfig.MaxAudioThreshold))
+                c.AudioThreshold = AppConfig.DefaultAudioThreshold;
             ModeConfig.AssignMissingColors(c.Modes);
         }
 
@@ -361,7 +366,7 @@ namespace AutoDisplayMode.Core
             }
 
             Line("# 省電螢幕工具 設定檔");
-            Line("# 本檔由程式整份重寫。手動修改並存檔後，請從右鍵選單選「重新載入cfg檔」才會生效；");
+            Line("# 本檔由程式整份重寫。手動修改並存檔後，請從右鍵選單選「重新載入 cfg」才會生效；");
             Line("# 程式存檔時會依格式重新產生整份內容與註解，自行加入的註解不會保留。");
             Line();
 
@@ -371,11 +376,11 @@ namespace AutoDisplayMode.Core
             Line("AutoSwitch=" + Bool(c.AutoSwitch));
             Line("# 目前模式（填下方某個 [Mode.N] 的 N）");
             Line("CurrentMode=" + Int(c.CurrentModeId));
-            Line("# 滑鼠要移動超過幾個像素才算使用（過濾桌面震動造成的微小位移）");
+            Line("# 滑鼠要移動超過幾個像素才算使用（1~1000，過濾桌面震動造成的微小位移）");
             Line("MouseMoveThreshold=" + Int(c.MouseMoveThreshold));
             Line("# 聲音峰值超過多少（0~1）才算有聲音");
             Line("AudioThreshold=" + c.AudioThreshold.ToString("R", CultureInfo.InvariantCulture));
-            Line("# 聲音要連續播放幾秒才算一次使用（過濾通知音這類短暫聲音）");
+            Line("# 聲音要連續播放幾秒才算一次使用（1~3600，過濾通知音這類短暫聲音）");
             Line("AudioSeconds=" + Int(c.AudioSeconds));
             Line("# 1 = 忽略遠端連線軟體送出的滑鼠或鍵盤輸入，避免遠端操作時被當成使用");
             Line("IgnoreRemoteInput=" + Bool(c.IgnoreRemoteInput));

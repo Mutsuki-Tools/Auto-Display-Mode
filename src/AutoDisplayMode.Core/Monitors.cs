@@ -222,6 +222,14 @@ namespace AutoDisplayMode.Core
         /// <summary>每台螢幕的螢幕設定（依 cfg 中的順序）。</summary>
         public List<MonitorSettings> Monitors { get; } = new();
 
+        /// <summary>深複製（螢幕設定是不可變的 record，複製清單即可）。</summary>
+        public ModeConfig Clone()
+        {
+            var m = new ModeConfig(Id, Name) { Color = Color, ManualAutoSwitch = ManualAutoSwitch, UnlistedMonitors = UnlistedMonitors };
+            m.Monitors.AddRange(Monitors);
+            return m;
+        }
+
         /// <summary>為尚未指定顏色的模式依序配上沒被其他模式使用的顏色（全部用過就從頭循環）。</summary>
         public static void AssignMissingColors(IReadOnlyList<ModeConfig> modes)
         {

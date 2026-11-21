@@ -177,6 +177,21 @@ namespace AutoDisplayMode.Core.Tests
             Assert.Equal(ModeConfig.Palette[1], c.Modes[1].Color);
         }
 
+        [Theory]
+        [InlineData("MouseMoveThreshold=5000", "1000|0.005|3")]
+        [InlineData("AudioThreshold=1.5", "10|0.005|3")]
+        [InlineData("AudioThreshold=-0.1", "10|0.005|3")]
+        [InlineData("AudioThreshold=NaN", "10|0.005|3")]
+        [InlineData("AudioThreshold=1", "10|1|3")]
+        [InlineData("AudioThreshold=0", "10|0|3")]
+        [InlineData("AudioSeconds=9999", "10|0.005|3600")]
+        public void 一般設定超出設定視窗的範圍時讀取後落在範圍內(string line, string expected)
+        {
+            var c = new Harness(Harness.Cfg("[General]", line)).App.Config;
+
+            Assert.Equal(expected, string.Join("|", c.MouseMoveThreshold, c.AudioThreshold, c.AudioSeconds));
+        }
+
         [Fact]
         public void 無效的切換條件略過並在啟動通知中說明原因()
         {
@@ -504,30 +519,84 @@ namespace AutoDisplayMode.Core.Tests
 
         // ---- 開機啟動 ----
 
-        [Fact]
-        public void 切換開機啟動並寫入cfg()
+        [Theory]
+        [InlineData(true, false)]
+        [InlineData(true, true)]    // 已經開啟也重寫一次：exe 搬家後更新為目前的路徑
+        [InlineData(false, true)]
+        [InlineData(false, false)]
+        public void 啟動時依cfg同步開機啟動(bool inCfg, bool inRegistry)
         {
-            var h = new Harness(Handwritten);
+            var h = new Harness(Harness.Cfg("[General]", "StartWithWindows=" + (inCfg ? 1 : 0)), startupEnabled: inRegistry);
 
-            h.App.ToggleStartup();
-            Assert.True(h.App.StartupEnabled);
-            Assert.Contains("StartWithWindows=1\r\n", h.Store.Text);
+            Assert.Equal(new[] { inCfg }, h.Startup.Calls);
+            Assert.Equal(inCfg, h.Startup.IsEnabled);
+        }
 
-            h.App.ToggleStartup();
-            Assert.False(h.App.StartupEnabled);
+        [Fact]
+        public void 無法同步開機啟動時在啟動通知中說明()
+        {
+            var h = new Harness(Harness.Cfg("[General]", "StartWithWindows=1"), start: false);
+            h.Startup.FailWith = "拒絕存取";
+
+            h.App.Start();
+
+            Assert.Contains("無法同步開機啟動設定：拒絕存取", Assert.Single(h.Notifier.Shown).Text);
+        }
+
+        [Fact]
+        public void cfg讀取失敗時不同步開機啟動()
+        {
+            var store = new FakeStore(Harness.Cfg("[General]", "StartWithWindows=1")) { FailReads = true };
+            var clock = new FakeClock();
+            var startup = new FakeStartup { IsEnabled = true };
+            var app = new AppCoordinator(store, new FakeMonitors(Harness.DefaultMonitor), new FakeSignals(clock),
+                clock, startup, new FakeNotifier());
+
+            app.Start();
+
+            Assert.Empty(startup.Calls);
+            Assert.True(startup.IsEnabled);
+        }
+
+        [Fact]
+        public void 重新載入cfg時依cfg同步開機啟動()
+        {
+            var h = new Harness(Harness.Cfg("[General]", "StartWithWindows=0"));
+            h.Store.Text = h.Store.Text!.Replace("StartWithWindows=0", "StartWithWindows=1");
+
+            h.App.ReloadConfig();
+
+            Assert.Equal(new[] { false, true }, h.Startup.Calls);
+            Assert.True(h.Startup.IsEnabled);
+        }
+
+        [Fact]
+        public void 在設定視窗變更開機啟動後寫入cfg並同步登錄檔()
+        {
+            var h = new Harness(Handwritten);   // StartWithWindows=1
+            AppConfig draft = h.App.Config.Clone();
+            draft.StartWithWindows = false;
+
+            Assert.Null(h.App.ApplySettings(draft));
+
+            Assert.False(h.Startup.IsEnabled);
             Assert.Contains("StartWithWindows=0\r\n", h.Store.Text);
         }
 
         [Fact]
-        public void 無法修改開機啟動時跳出錯誤通知()
+        public void 在設定視窗變更開機啟動但無法修改登錄檔時跳出錯誤通知_cfg仍寫入()
         {
             var h = new Harness(Harness.Cfg());
             h.Startup.FailWith = "拒絕存取";
+            AppConfig draft = h.App.Config.Clone();
+            draft.StartWithWindows = true;
 
-            h.App.ToggleStartup();
+            Assert.Null(h.App.ApplySettings(draft));
 
-            Assert.False(h.App.StartupEnabled);
-            Assert.Contains(("無法修改開機啟動設定：拒絕存取", NotificationKind.Error), h.Notifier.Shown);
+            Assert.False(h.Startup.IsEnabled);
+            Assert.Contains("StartWithWindows=1\r\n", h.Store.Text);
+            Assert.Equal(NotificationKind.Error, h.Notifier.Shown.Last().Kind);
+            Assert.Contains("無法同步開機啟動設定：拒絕存取", h.Notifier.Shown.Last().Text);
         }
 
         /// <summary>把設定轉成可比較的文字（一般設定、切換條件、每個模式與螢幕設定）。</summary>

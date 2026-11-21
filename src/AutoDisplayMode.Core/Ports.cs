@@ -75,12 +75,16 @@ namespace AutoDisplayMode.Core
         void CreateBackup();
     }
 
-    /// <summary>開機啟動：目前使用者登入時是否自動開啟本程式。</summary>
+    /// <summary>開機啟動：目前使用者登入時是否自動開啟本程式。開機啟動以 cfg 為準，程式啟動時同步。</summary>
     public interface IStartupRegistration
     {
+        /// <summary>
+        /// 是否已有本程式的開機啟動項目（不論指向哪個路徑，所以 exe 搬家後仍讀得到）。
+        /// 只在首次啟動與轉移舊格式 cfg 時讀取，沿用升級前的狀態。
+        /// </summary>
         bool IsEnabled { get; }
 
-        /// <summary>修改開機啟動設定；失敗時丟出例外。</summary>
+        /// <summary>開啟時寫入目前的 exe 路徑（已存在也覆寫），關閉時刪除；失敗時丟出例外。</summary>
         void SetEnabled(bool enabled);
     }
 

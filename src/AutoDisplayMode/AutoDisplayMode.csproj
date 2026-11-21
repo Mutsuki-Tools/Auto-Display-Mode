@@ -6,6 +6,8 @@
     <RootNamespace>AutoDisplayMode</RootNamespace>
     <AssemblyName>AutoDisplayMode</AssemblyName>
     <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <!-- 宣告系統 DPI 感知（見 app.manifest） -->
+    <ApplicationManifest>app.manifest</ApplicationManifest>
   </PropertyGroup>
 
   <!--

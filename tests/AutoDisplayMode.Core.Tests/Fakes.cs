@@ -70,6 +70,7 @@ namespace AutoDisplayMode.Core.Tests
 
         public string? Text { get; set; }
         public bool FailReads { get; set; }
+        public bool FailWrites { get; set; }
         public int Writes { get; private set; }
         public string Location => @"C:\app\AutoDisplayMode.cfg";
 
@@ -87,6 +88,7 @@ namespace AutoDisplayMode.Core.Tests
 
         public void WriteText(string text)
         {
+            if (FailWrites) throw new System.IO.IOException("寫入失敗");
             Text = text;
             Writes++;
         }
@@ -167,8 +169,12 @@ namespace AutoDisplayMode.Core.Tests
         public bool IsEnabled { get; set; }
         public string? FailWith { get; set; }
 
+        /// <summary>每次呼叫 <see cref="SetEnabled"/> 的值（開啟時真實的轉接層會寫入目前的 exe 路徑）。</summary>
+        public List<bool> Calls { get; } = new();
+
         public void SetEnabled(bool enabled)
         {
+            Calls.Add(enabled);
             if (FailWith != null) throw new UnauthorizedAccessException(FailWith);
             IsEnabled = enabled;
         }

@@ -9,6 +9,7 @@ using System.Linq;
 using System.Threading;
 using System.Windows.Forms;
 using AutoDisplayMode.Core;
+using AutoDisplayMode.Settings;
 using AutoDisplayMode.Windows;
 
 namespace AutoDisplayMode
@@ -26,10 +27,12 @@ namespace AutoDisplayMode
         readonly ToolStripSeparator modesEnd;
         readonly List<ToolStripMenuItem> modeItems = new();
         readonly ToolStripMenuItem miAuto;
-        readonly ToolStripMenuItem miStartup;
         readonly ToolStripMenuItem miCapture;
+        readonly ToolStripMenuItem miReload;
         readonly Dictionary<(int Color, bool Filled), Icon> icons = new();
         readonly System.Windows.Forms.Timer timer;
+        readonly int swatchSize;   // 選單中顏色方塊的邊長（依 DPI 放大）
+        SettingsForm? settings;    // 只允許開一個設定視窗；沒開時為 null
 
         public TrayApp()
         {
@@ -51,18 +54,21 @@ namespace AutoDisplayMode
 
             // ---- 右鍵選單 ----
             menu = new ContextMenuStrip();
+            swatchSize = ScaleForDpi(16);
+            menu.ImageScalingSize = new Size(swatchSize, swatchSize);
 
             miStatus = new ToolStripMenuItem("") { Enabled = false };
             modesEnd = new ToolStripSeparator();   // 模式清單放在 miStatus 後的分隔線與這條分隔線之間
 
-            miAuto = new ToolStripMenuItem("", null, delegate { app.SetAutoSwitch(!app.Config.AutoSwitch); });
+            miAuto = new ToolStripMenuItem("自動切換", null, delegate { app.SetAutoSwitch(!app.Config.AutoSwitch); });
 
+            var miSettings = new ToolStripMenuItem("設定…", null, delegate { ShowSettings(); });
+            miSettings.Font = new Font(miSettings.Font, FontStyle.Bold);   // 雙擊圖示的預設動作
             miCapture = new ToolStripMenuItem("", null, delegate { ConfirmCapture(); });
 
+            var miOpenCfg = new ToolStripMenuItem("用記事本開啟 cfg", null, delegate { OpenConfig(); });
+            miReload = new ToolStripMenuItem("重新載入 cfg", null, delegate { app.ReloadConfig(); });
             var miHelp = new ToolStripMenuItem("說明", null, delegate { ShowHelp(); });
-            var miOpenCfg = new ToolStripMenuItem("以文字文件開啟cfg檔", null, delegate { OpenConfig(); });
-            var miReload = new ToolStripMenuItem("重新載入cfg檔", null, delegate { app.ReloadConfig(); });
-            miStartup = new ToolStripMenuItem("", null, delegate { app.ToggleStartup(); });
             var miExit = new ToolStripMenuItem("關閉程式", null, delegate { ExitApp(); });
 
             menu.Items.AddRange(new ToolStripItem[]
@@ -72,18 +78,19 @@ namespace AutoDisplayMode
                 modesEnd,
                 miAuto,
                 new ToolStripSeparator(),
+                miSettings,
                 miCapture,
                 new ToolStripSeparator(),
-                miHelp,
                 miOpenCfg,
                 miReload,
-                miStartup,
+                miHelp,
                 new ToolStripSeparator(),
                 miExit,
             });
             menu.Opening += delegate { UpdateUi(); };
 
             tray.ContextMenuStrip = menu;
+            tray.MouseDoubleClick += (_, e) => { if (e.Button == MouseButtons.Left) ShowSettings(); };
             tray.Visible = true;
             app.Changed += UpdateUi;
 
@@ -98,6 +105,31 @@ namespace AutoDisplayMode
                 app.Start();
                 timer.Start();
             }, null);
+        }
+
+        // ------------------------------------------------------------
+        //  設定視窗
+        // ------------------------------------------------------------
+
+        /// <summary>開啟設定視窗；已經開著時還原（如果最小化）並帶到前景，不開第二個。</summary>
+        void ShowSettings()
+        {
+            if (settings != null)
+            {
+                settings.BringToFrontAndRestore();
+                return;
+            }
+
+            var form = new SettingsForm(app, tray.Icon, AppTitle);
+            form.FormClosed += delegate
+            {
+                form.Dispose();
+                settings = null;
+                app.OnSettingsWindowClosed();
+            };
+            settings = form;
+            app.OnSettingsWindowOpened();
+            form.BringToFrontAndRestore();
         }
 
         // ------------------------------------------------------------
@@ -140,10 +172,10 @@ namespace AutoDisplayMode
 
             miStatus.Text = "目前：" + modeName + (target != null ? "（正在切換到「" + target + "」…）" : "");
             UpdateModeItems();
-            miAuto.Text = "自動切換 [目前：" + OnOff(cfg.AutoSwitch) + "]";
-            miStartup.Text = "開機時自動開啟此程式 [目前：" + OnOff(app.StartupEnabled) + "]";
-            miCapture.Text = "將目前螢幕狀態存入「" + modeName + "」…";
-            miCapture.Enabled = !app.IsSwitching;
+            miAuto.Checked = cfg.AutoSwitch;
+            miCapture.Text = "將目前螢幕狀態存入「" + modeName.Replace("&", "&&") + "」…";
+            miCapture.Enabled = !app.IsSwitching && !app.SettingsWindowOpen;   // 設定視窗開著時，擷取會被視窗的副本蓋掉
+            miReload.Enabled = !app.SettingsWindowOpen;                        // 避免與設定視窗互相覆蓋
 
             tray.Icon = IconFor(cfg.CurrentModeConfig?.Color ?? ModeConfig.Palette[0], cfg.AutoSwitch);
 
@@ -169,7 +201,7 @@ namespace AutoDisplayMode
                 int id = mode.Id;
                 string text = mode.Name.Replace("&", "&&");
                 if (id == app.SwitchTargetId) text += "（切換中…）";
-                var item = new ToolStripMenuItem(text, ColorSwatch(mode.Color), delegate { app.ManualSwitch(id); })
+                var item = new ToolStripMenuItem(text, ColorSwatch(mode.Color, swatchSize), delegate { app.ManualSwitch(id); })
                 {
                     Checked = id == cfg.CurrentModeId,
                 };
@@ -185,44 +217,49 @@ namespace AutoDisplayMode
         void ShowHelp()
         {
             AppConfig cfg = app.Config;
+            string name = app.CurrentModeName;
             string conditions = cfg.SwitchConditions.Count == 0
                 ? "・（尚未設定任何切換條件）\n"
                 : string.Concat(cfg.SwitchConditions.Select((s, i) => "・" + (i + 1) + ". " + s.Describe(cfg) + "\n"));
             string help =
-                "【模式】\n" +
+                "【模式】目前：" + name + "\n" +
                 "・右鍵選單列出所有模式，目前模式打勾；點一下即手動切換，依該模式記錄的螢幕設定套用。\n" +
-                "・模式中記錄但沒接上的螢幕會略過；接上但沒記錄的螢幕依模式的 UnlistedMonitors 設定維持現狀或關閉。\n" +
+                "・模式中記錄但沒接上的螢幕會略過；接上但沒記錄的螢幕依模式的設定維持現狀或關閉。\n" +
                 "・套用後沒有任何螢幕會開著時拒絕切換；套用失敗時維持原本的模式，自動切換暫停 1 分鐘。\n" +
-                "・手動切換進入模式時，自動切換依模式的 ManualAutoSwitch 設定維持、開啟或關閉。\n" +
-                "・模式目前只能在cfg檔中新增與修改。\n\n" +
-                "【自動切換】由選單或cfg檔設定[當前為" + OnOff(cfg.AutoSwitch) + "]\n" +
-                "・依cfg檔的切換條件（[Switch.N]）自動切換：只檢查來源模式等於目前模式的切換條件，由上往下第一條成立的就切換。\n" +
+                "・手動切換進入模式時，自動切換依模式的設定維持、開啟或關閉。\n" +
+                "・模式目前請用記事本開啟 cfg 新增與修改。\n\n" +
+                "【自動切換】目前：" + OnOff(cfg.AutoSwitch) + "（可從右鍵選單開關）\n" +
+                "・只檢查來源模式等於目前模式的切換條件，由上往下第一條成立的就切換。\n" +
                 "・閒置：所選的使用來源全部都沒有使用，持續指定的分鐘或小時。\n" +
                 "・偵測到使用：所選的使用來源任一個出現使用就成立。\n" +
-                "・使用來源可複選「滑鼠或鍵盤」與「聲音」；聲音要連續播放達門檻秒數才算使用（通知音這類短暫聲音不算）。\n" +
+                "・使用來源可複選「滑鼠或鍵盤」與「聲音」；聲音要連續播放達聲音持續秒數才算使用（通知音這類短暫聲音不算）。\n" +
                 "・只有目前模式有「偵測到使用＋滑鼠或鍵盤」的切換條件時才掛滑鼠與鍵盤鉤子，其他模式完全不掛。\n" +
                 "・每次切換完成後所有閒置計時歸零，並有 10 秒緩衝期。\n" +
-                "目前的切換條件：\n" +
-                conditions +
-                "・聲音需連續播放的秒數由cfg檔設定[當前為" + cfg.AudioSeconds + "秒]\n" +
-                "・聲音音量門檻由cfg檔設定[當前為" + cfg.AudioThreshold.ToString(CultureInfo.InvariantCulture) + "]\n" +
-                "・滑鼠移動門檻由cfg檔設定[當前為" + cfg.MouseMoveThreshold + "像素]\n" +
-                "・偵測到使用時忽略遠端連線軟體送出的滑鼠或鍵盤輸入，由cfg檔設定[當前為" + OnOff(cfg.IgnoreRemoteInput) + "]\n" +
-                "・自動切換時跳出通知，由cfg檔設定[當前為" + OnOff(cfg.ShowNotifications) + "]\n\n" +
+                "・設定視窗開著時暫停自動切換。\n" +
+                "目前的切換條件（請用記事本開啟 cfg 新增與修改）：\n" +
+                conditions + "\n" +
+                "【一般設定】雙擊工作列圖示或從右鍵選單選「設定…」修改\n" +
+                "・滑鼠移動門檻：" + cfg.MouseMoveThreshold + " 像素\n" +
+                "・聲音音量門檻：" + cfg.AudioThreshold.ToString(CultureInfo.InvariantCulture) + "\n" +
+                "・聲音持續秒數：" + cfg.AudioSeconds + " 秒\n" +
+                "・偵測到使用時忽略遠端連線軟體送出的滑鼠或鍵盤輸入：" + OnOff(cfg.IgnoreRemoteInput) + "\n" +
+                "・自動切換時跳出通知：" + OnOff(cfg.ShowNotifications) + "\n" +
+                "・開機登入時自動開啟：" + OnOff(cfg.StartWithWindows) + "\n\n" +
                 "【擷取】\n" +
-                "・選單「將目前螢幕狀態存入「" + app.CurrentModeName + "」…」會把目前每台螢幕的狀態存進目前模式（cfg檔）。\n\n" +
+                "・右鍵選單「將目前螢幕狀態存入「" + name + "」…」會把目前每台螢幕的狀態存進目前模式。\n\n" +
                 "【圖示】\n" +
-                "・顏色：目前模式的顏色（cfg檔各模式的 Color）\n" +
+                "・顏色：目前模式的顏色\n" +
                 "・實心：自動切換開啟　空心：自動切換關閉\n\n" +
-                "【設定檔】\n" +
+                "【cfg】\n" +
                 "・位置：" + app.ConfigLocation + "\n" +
-                "・從選單「以文字文件開啟cfg檔」修改並存檔後，選「重新載入cfg檔」即生效。";
+                "・從右鍵選單「用記事本開啟 cfg」修改並存檔後，選「重新載入 cfg」即生效（設定視窗開著時無法重新載入）。";
 
             MessageBox.Show(help, AppTitle + " - 說明", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
 
         void ExitApp()
         {
+            settings?.Close();   // 放棄設定視窗中未套用的修改
             timer.Stop();
             signals.Dispose();
             tray.Visible = false;
@@ -264,15 +301,23 @@ namespace AutoDisplayMode
             return Icon.FromHandle(bmp.GetHicon());
         }
 
-        /// <summary>選單中模式名稱前的顏色方塊。</summary>
-        static Image ColorSwatch(int rgb)
+        /// <summary>選單中模式名稱前的顏色方塊（邊長 <paramref name="size"/>，四周留 1/8 的空白）。</summary>
+        static Image ColorSwatch(int rgb, int size)
         {
-            var bmp = new Bitmap(16, 16);
+            var bmp = new Bitmap(size, size);
             using Graphics g = Graphics.FromImage(bmp);
             g.Clear(Color.Transparent);
             using var b = new SolidBrush(ToColor(rgb));
-            g.FillRectangle(b, 2, 2, 12, 12);
+            int margin = size / 8;
+            g.FillRectangle(b, margin, margin, size - 2 * margin, size - 2 * margin);
             return bmp;
+        }
+
+        /// <summary>把 96 DPI 時的像素數依系統 DPI 放大。</summary>
+        static int ScaleForDpi(int pixels)
+        {
+            using Graphics g = Graphics.FromHwnd(IntPtr.Zero);
+            return (int)Math.Round(pixels * g.DpiX / 96f);
         }
     }
 }

@@ -25,6 +25,7 @@ namespace AutoDisplayMode.Core
         /// <summary>首次啟動時以目前螢幕狀態建立的模式名稱。</summary>
         const string DefaultModeName = "預設";
         const string BusyText = "正在切換中，請稍候。";
+        const string SettingsOpenText = "設定視窗開啟中，請先關閉設定視窗";
 
         readonly IConfigStore store;
         readonly IMonitorSystem monitors;
@@ -39,6 +40,7 @@ namespace AutoDisplayMode.Core
         long ignoreUntilMs;      // 在這個時間之前不做自動切換（切換螢幕後的緩衝、失敗後的暫停）
         int audioStreak;         // 連續偵測到聲音的秒數
         uint lastInputTick;      // 上次看到的 Windows 最後輸入時間
+        bool settingsOpen;    // 設定視窗開著：暫停自動切換
         bool writesBlocked;   // cfg 讀取或舊版備份失敗：不寫入 cfg，避免覆蓋原本的內容
         string loadNote = ""; // 載入 cfg 時發生的事（轉移、備份失敗等），附加在下一則通知中
 
@@ -77,8 +79,6 @@ namespace AutoDisplayMode.Core
 
         public string ConfigLocation => store.Location;
 
-        public bool StartupEnabled => startup.IsEnabled;
-
         /// <summary>目前模式的名稱。</summary>
         public string CurrentModeName => config.CurrentModeConfig?.Name ?? "";
 
@@ -111,6 +111,7 @@ namespace AutoDisplayMode.Core
             long now = clock.NowMs;
             ignoreUntilMs = now + StartupGraceMs;
             ResetUsageTracking(now);
+            SyncStartupIntoLoadNote();
             notifier.Notify("省電螢幕工具已啟動。\n" + TakeLoadNote() + StatusSummary, NotificationKind.Info);
         }
 
@@ -140,7 +141,7 @@ namespace AutoDisplayMode.Core
 
             ApplyHookPolicy();
 
-            if (!config.AutoSwitch || IsSwitching || now < ignoreUntilMs) return;
+            if (!config.AutoSwitch || IsSwitching || settingsOpen || now < ignoreUntilMs) return;
 
             foreach (SwitchCondition s in ConditionsFromCurrentMode())
             {
@@ -168,12 +169,12 @@ namespace AutoDisplayMode.Core
         }
 
         /// <summary>
-        /// 只在「自動切換開 + 沒有在切換 + 目前模式是某條『偵測到使用 + 滑鼠或鍵盤』切換條件的來源模式」時安裝滑鼠與鍵盤鉤子，
-        /// 其他情況完全不掛（不影響遊戲的輸入延遲）。
+        /// 只在「自動切換開 + 沒有在切換 + 設定視窗沒開 + 目前模式是某條『偵測到使用 + 滑鼠或鍵盤』切換條件的來源模式」時
+        /// 安裝滑鼠與鍵盤鉤子，其他情況完全不掛（不影響遊戲的輸入延遲）。
         /// </summary>
         void ApplyHookPolicy()
         {
-            bool need = config.AutoSwitch && !IsSwitching && ConditionsFromCurrentMode().Any(s =>
+            bool need = config.AutoSwitch && !IsSwitching && !settingsOpen && ConditionsFromCurrentMode().Any(s =>
                 s.Kind == SwitchConditionKind.UsageDetected && s.Uses(UsageSources.MouseKeyboard));
             signals.ApplyHookPolicy(new InputHookPolicy(need, ignoreUntilMs, config.MouseMoveThreshold, config.IgnoreRemoteInput));
         }
@@ -309,22 +310,88 @@ namespace AutoDisplayMode.Core
         }
 
         // ------------------------------------------------------------
+        //  設定視窗
+        // ------------------------------------------------------------
+
+        /// <summary>設定視窗開著（暫停自動切換、停用重新載入 cfg 與從工作列擷取）。</summary>
+        public bool SettingsWindowOpen => settingsOpen;
+
+        /// <summary>設定視窗開啟時呼叫：暫停自動切換。</summary>
+        public void OnSettingsWindowOpened()
+        {
+            settingsOpen = true;
+            ApplyHookPolicy();
+            OnChanged();
+        }
+
+        /// <summary>
+        /// 套用設定視窗暫存的設定（<see cref="AppConfig.Clone"/> 出來修改的複本）：寫入 cfg 並立即生效。
+        /// 成功時回傳 null；失敗時回傳原因，設定維持不變。
+        /// </summary>
+        public string? ApplySettings(AppConfig edited)
+        {
+            if (edited.Validate(config.CurrentModeId) is string invalid) return invalid;
+            if (writesBlocked)
+                return "讀取設定檔或備份舊版設定檔時失敗，為避免覆蓋原本的內容，未套用任何修改。\n" +
+                       "請關閉設定視窗，修正設定檔後從工作列選「重新載入 cfg」。";
+
+            // 目前模式與自動切換以協調者記錄的為準：設定視窗開著時仍可從工作列手動切換、開關自動切換
+            AppConfig next = edited.Clone();
+            next.CurrentModeId = config.CurrentModeId;
+            next.AutoSwitch = config.AutoSwitch;
+            if (!Save(next)) return "無法寫入設定檔：\n" + store.Location;
+
+            bool startupChanged = next.StartWithWindows != config.StartWithWindows;
+            config = next;
+            if (startupChanged && SyncStartup() is string error)
+                notifier.Notify(error + "\n下次啟動程式時會再試一次。", NotificationKind.Error);
+
+            audioStreak = 0;   // 聲音音量門檻或持續秒數可能改變
+            ApplyHookPolicy();
+            OnChanged();
+            return null;
+        }
+
+        /// <summary>
+        /// 設定視窗關閉時呼叫：恢復自動切換。所有閒置計時歸零並有 3 秒緩衝期，
+        /// 避免例如「只選聲音」的閒置條件在編輯期間累積，一關閉視窗就切換。
+        /// </summary>
+        public void OnSettingsWindowClosed()
+        {
+            long now = clock.NowMs;
+            settingsOpen = false;
+            ignoreUntilMs = Math.Max(ignoreUntilMs, now + ToggleGraceMs);
+            ResetUsageTracking(now);
+            ApplyHookPolicy();
+            OnChanged();
+        }
+
+        // ------------------------------------------------------------
         //  開機啟動
         // ------------------------------------------------------------
 
-        public void ToggleStartup()
+        /// <summary>
+        /// 以 cfg 為準同步登錄檔：開啟時寫入目前的 exe 路徑（exe 搬家後重開程式就會修正），關閉時刪除。
+        /// 成功時回傳 null，失敗時回傳說明。cfg 讀取失敗時（設定是預設值）不同步，避免誤刪開機啟動。
+        /// </summary>
+        string? SyncStartup()
         {
+            if (writesBlocked) return null;
             try
             {
-                startup.SetEnabled(!startup.IsEnabled);
+                startup.SetEnabled(config.StartWithWindows);
+                return null;
             }
             catch (Exception ex)
             {
-                notifier.Notify("無法修改開機啟動設定：" + ex.Message, NotificationKind.Error);
+                return "無法同步開機啟動設定：" + ex.Message;
             }
-            config.StartWithWindows = startup.IsEnabled;
-            Save();
-            OnChanged();
+        }
+
+        /// <summary>同步開機啟動；失敗時把說明附加在下一則啟動或重新載入的通知中。</summary>
+        void SyncStartupIntoLoadNote()
+        {
+            if (SyncStartup() is string error) loadNote += error + "\n";
         }
 
         // ------------------------------------------------------------
@@ -337,6 +404,12 @@ namespace AutoDisplayMode.Core
             if (IsSwitching)
             {
                 notifier.Notify(BusyText, NotificationKind.Info);
+                return;
+            }
+            if (settingsOpen)
+            {
+                // 設定視窗的副本不含這次擷取，套用時會把它蓋掉
+                notifier.Notify(SettingsOpenText + "再擷取。", NotificationKind.Info);
                 return;
             }
 
@@ -372,9 +445,16 @@ namespace AutoDisplayMode.Core
         /// </summary>
         public void ReloadConfig()
         {
+            if (settingsOpen)
+            {
+                notifier.Notify(SettingsOpenText + "再重新載入 cfg。", NotificationKind.Info);
+                return;
+            }
+
             int current = config.CurrentModeId;
             config = LoadConfig();
             if (config.FindMode(current) != null) config.CurrentModeId = current;
+            SyncStartupIntoLoadNote();
 
             ResetUsageTracking(clock.NowMs);
             signals.RequestAudioRefresh();

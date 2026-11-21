@@ -37,6 +37,7 @@ namespace AutoDisplayMode.Windows
 
         static string Command => "\"" + Application.ExecutablePath + "\"";
 
+        /// <summary>有本程式的 Run 值就算開啟，不比對路徑：exe 搬家後首次啟動或轉移舊 cfg 時仍沿用開機啟動。</summary>
         public bool IsEnabled
         {
             get
@@ -44,8 +45,7 @@ namespace AutoDisplayMode.Windows
                 try
                 {
                     using RegistryKey? k = Registry.CurrentUser.OpenSubKey(RunKeyPath, false);
-                    return k?.GetValue(RunValueName) is string v &&
-                           string.Equals(v, Command, StringComparison.OrdinalIgnoreCase);
+                    return k?.GetValue(RunValueName) is string v && v.Trim().Length > 0;
                 }
                 catch
                 {

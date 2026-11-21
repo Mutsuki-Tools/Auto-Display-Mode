@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<assembly manifestVersion="1.0" xmlns="urn:schemas-microsoft-com:asm.v1">
+  <assemblyIdentity version="1.0.0.0" name="AutoDisplayMode.app" />
+  <trustInfo xmlns="urn:schemas-microsoft-com:asm.v2">
+    <security>
+      <requestedPrivileges xmlns="urn:schemas-microsoft-com:asm.v3">
+        <!-- 不需系統管理員權限 -->
+        <requestedExecutionLevel level="asInvoker" uiAccess="false" />
+      </requestedPrivileges>
+    </security>
+  </trustInfo>
+  <application xmlns="urn:schemas-microsoft-com:asm.v3">
+    <windowsSettings>
+      <!--
+        系統 DPI 感知：設定視窗與選單在高縮放比例（例如 4K、150%）的螢幕上不會被點陣放大而模糊。
+        只用系統層級，不用每台螢幕各自感知：.NET Framework 4.8 的 WinForms 要每台螢幕各自縮放需要另附 exe.config，
+        會破壞單一 exe 的產出。DPI 感知可能影響螢幕偵測與套用的座標，修改這裡之後須重新手動實測擷取與套用。
+      -->
+      <dpiAware xmlns="http://schemas.microsoft.com/SMI/2005/WindowsSettings">true</dpiAware>
+    </windowsSettings>
+  </application>
+</assembly>

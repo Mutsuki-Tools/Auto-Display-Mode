@@ -13,7 +13,8 @@ namespace AutoDisplayMode.Settings
     /// </summary>
     sealed class SwitchConditionsPage : SettingsPage
     {
-        const int FromCol = 0, KindCol = 1, AmountCol = 2, UnitCol = 3, MouseCol = 4, AudioCol = 5, ToCol = 6;
+        const int FromCol = 0, KindCol = 1, AmountCol = 2, UnitCol = 3, MouseCol = 4, AudioCol = 5, ToCol = 6, ForcedCol = 7;
+        const string ForcedTip = "勾選後，即使自動切換關閉、設定視窗開著，這條也照樣生效";
 
         readonly AppCoordinator app;
         readonly DataGridView grid;
@@ -41,13 +42,15 @@ namespace AutoDisplayMode.Settings
             var kindColumn = ChoiceColumn("條件", 95,
                 new Choice((int)SwitchConditionKind.Idle, "閒置"),
                 new Choice((int)SwitchConditionKind.UsageDetected, "偵測到使用"));
-            var amountColumn = new DataGridViewTextBoxColumn { HeaderText = "閒置時間", FillWeight = 60, MaxInputLength = 9 };
+            var amountColumn = new DataGridViewTextBoxColumn { HeaderText = "閒置時間", FillWeight = 70, MaxInputLength = 9 };
             amountColumn.DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleRight;
             var unitColumn = ChoiceColumn("單位", 55,
                 new Choice((int)IdleUnit.Minutes, "分鐘"),
                 new Choice((int)IdleUnit.Hours, "小時"));
-            var mouseColumn = new DataGridViewCheckBoxColumn { HeaderText = "鍵盤滑鼠", FillWeight = 88 };
-            var audioColumn = new DataGridViewCheckBoxColumn { HeaderText = "聲音", FillWeight = 45 };
+            // 兩個使用來源欄等寬
+            var mouseColumn = new DataGridViewCheckBoxColumn { HeaderText = "鍵盤滑鼠", FillWeight = 62 };
+            var audioColumn = new DataGridViewCheckBoxColumn { HeaderText = "聲音", FillWeight = 62 };
+            var forcedColumn = new DataGridViewCheckBoxColumn { HeaderText = "強制", FillWeight = 45, ToolTipText = ForcedTip };
 
             grid = new DataGridView
             {
@@ -68,7 +71,7 @@ namespace AutoDisplayMode.Settings
                 Margin = new Padding(0, 6, 0, 0),
             };
             grid.ColumnHeadersDefaultCellStyle.WrapMode = DataGridViewTriState.True;
-            grid.Columns.AddRange(fromColumn, kindColumn, amountColumn, unitColumn, mouseColumn, audioColumn, toColumn);
+            grid.Columns.AddRange(fromColumn, kindColumn, amountColumn, unitColumn, mouseColumn, audioColumn, toColumn, forcedColumn);
             foreach (DataGridViewColumn c in grid.Columns) c.SortMode = DataGridViewColumnSortMode.NotSortable;
 
             grid.CurrentCellDirtyStateChanged += delegate
@@ -123,7 +126,8 @@ namespace AutoDisplayMode.Settings
             Label usage = Hint(
                 "拖拉列首（每列最左邊的格子）或按「上移」「下移」調整順序。\n" +
                 "閒置：所選的使用來源全部都沒有使用，持續指定的時間。\n" +
-                "偵測到使用：所選的使用來源任一個出現使用就成立。");
+                "偵測到使用：所選的使用來源任一個出現使用就成立。\n" +
+                "強制：" + ForcedTip + "。");
             usage.Margin = new Padding(3, 6, 3, 0);
             root.Controls.Add(usage, 0, 4);
             Controls.Add(root);
@@ -134,15 +138,16 @@ namespace AutoDisplayMode.Settings
             "・一條切換條件是「來源模式 + 條件 → 目標模式」：處於來源模式時，條件成立就切換到目標模式。\n" +
             "・用「新增」「刪除」管理切換條件，直接在表格中修改來源模式、條件、使用來源與目標模式。\n" +
             "・只檢查來源模式等於目前模式的切換條件，由上往下第一條成立的就切換。拖拉列首或按「上移」「下移」調整順序。\n" +
-            "・自動切換關閉時（右鍵選單「自動切換」）不會依切換條件切換。\n\n" +
+            "・自動切換關閉時（右鍵選單「自動切換」），只檢查有勾「強制」的切換條件。\n" +
+            "・強制：勾選後，即使自動切換關閉、設定視窗開著，這條也照樣生效（預設不勾）。\n\n" +
             "【條件】\n" +
             "・閒置：所選的使用來源全部都沒有使用，持續指定的分鐘或小時。\n" +
             "・偵測到使用：所選的使用來源任一個出現使用就成立。\n" +
             "・使用來源可複選「鍵盤滑鼠」與「聲音」；聲音要連續播放達「聲音持續秒數」才算使用（通知音這類短暫聲音不算）。門檻在「一般設定」分頁調整。\n\n" +
             "【計時】\n" +
             "・每次切換完成後所有閒置計時歸零，並有 10 秒緩衝期。\n" +
-            "・設定視窗開著時暫停自動切換。\n" +
-            "・只有目前模式有「偵測到使用＋鍵盤滑鼠」的切換條件時才監聽鍵盤滑鼠輸入，其他模式完全不監聽（閒置計時只看 Windows 記錄的最後輸入時間）。\n\n" +
+            "・設定視窗開著時暫停沒勾強制的切換條件；有勾強制的照樣生效，切換後設定視窗維持開啟，編輯中的內容不受影響。\n" +
+            "・只有目前模式有會被檢查的「偵測到使用＋鍵盤滑鼠」切換條件時才監聽鍵盤滑鼠輸入（自動切換關閉或設定視窗開著時只看有勾強制的），其他情況完全不監聽（閒置計時只看 Windows 記錄的最後輸入時間）。\n\n" +
             "【無法套用】\n" +
             "・來源模式與目標模式相同、沒有選任何使用來源、閒置時間不是正整數。";
 
@@ -219,6 +224,7 @@ namespace AutoDisplayMode.Settings
                 Set(row.Cells[MouseCol], s.Uses(UsageSources.MouseKeyboard));
                 Set(row.Cells[AudioCol], s.Uses(UsageSources.Audio));
                 Set(row.Cells[ToCol], s.ToModeId);
+                Set(row.Cells[ForcedCol], s.Forced);
 
                 // 偵測到使用沒有閒置時間：欄位清空並鎖住（副本仍保留數值，切回閒置時恢復）
                 DataGridViewCell amount = row.Cells[AmountCol];
@@ -280,6 +286,7 @@ namespace AutoDisplayMode.Settings
                 case AmountCol: SetIdleAmount(r, value as string ?? "", redraw: true); return;
                 case MouseCol: s = s with { Sources = Toggle(s.Sources, UsageSources.MouseKeyboard, value is true) }; break;
                 case AudioCol: s = s with { Sources = Toggle(s.Sources, UsageSources.Audio, value is true) }; break;
+                case ForcedCol: s = s with { Forced = value is true }; break;
                 default: return;
             }
             Replace(r, s);

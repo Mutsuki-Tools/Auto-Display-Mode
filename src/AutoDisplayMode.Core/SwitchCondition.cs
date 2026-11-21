@@ -53,6 +53,9 @@ namespace AutoDisplayMode.Core
         /// <summary>目標模式的 ID。</summary>
         public int ToModeId { get; init; }
 
+        /// <summary>強制：即使自動切換關閉、設定視窗開著，這條切換條件照樣生效。</summary>
+        public bool Forced { get; init; }
+
         /// <summary>閒置時間（毫秒）。</summary>
         public long IdleMs => IdleAmount * (IdleUnit == IdleUnit.Hours ? 3_600_000L : 60_000L);
 
@@ -76,9 +79,10 @@ namespace AutoDisplayMode.Core
             return null;
         }
 
-        /// <summary>給人看的描述，例如「遊玩」閒置 5 分鐘（鍵盤滑鼠、聲音）→「省電」。</summary>
+        /// <summary>給人看的描述，例如「遊玩」閒置 5 分鐘（鍵盤滑鼠、聲音）→「省電」；有勾強制時結尾加上「（強制）」。</summary>
         public string Describe(AppConfig config) =>
-            "「" + ModeName(config, FromModeId) + "」" + DescribeCondition() + "（" + DescribeSources() + "）→「" + ModeName(config, ToModeId) + "」";
+            "「" + ModeName(config, FromModeId) + "」" + DescribeCondition() + "（" + DescribeSources() + "）→「" + ModeName(config, ToModeId) + "」" +
+            (Forced ? "（強制）" : "");
 
         /// <summary>條件部分的描述，例如「閒置 5 分鐘」「偵測到使用」。</summary>
         public string DescribeCondition() =>

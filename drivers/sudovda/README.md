@@ -1,6 +1,6 @@
 # SudoVDA 虛擬螢幕驅動
 
-遠端模式用來建立虛擬螢幕的驅動（ADR-0005）。原始碼來自 [SudoMaker/SudoVDA](https://github.com/SudoMaker/SudoVDA)，由我們自行編譯，並以拋棄式自簽憑證簽章：簽完後私鑰立即刪除，所以這張憑證無法再簽其他任何東西。
+潛行模式用來建立虛擬螢幕的驅動（ADR-0005）。原始碼來自 [SudoMaker/SudoVDA](https://github.com/SudoMaker/SudoVDA)，由我們自行編譯，並以拋棄式自簽憑證簽章：簽完後私鑰立即刪除，所以這張憑證無法再簽其他任何東西。
 
 ## 檔案
 
@@ -8,6 +8,8 @@
 - `AutoDisplayMode-SudoVDA.cer`：公開憑證。安裝驅動時匯入本機的「受信任的根憑證授權單位」與「受信任的發行者」，移除驅動時一併刪除
 - `build-driver.ps1`：重新編譯與簽章的腳本，原始碼版本以 commit 固定
 - `LICENSE.txt`：SudoVDA 與 Microsoft 範例程式碼的授權聲明
+
+`build.bat` 建置時，把 `x64/`、公開憑證與 `LICENSE.txt` 複製到 `release/drivers/sudovda/`，程式從 exe 旁邊的這個資料夾找驅動檔。這裡的檔案才是正本，`release/` 中的複本不進 git。
 
 ## 重新編譯
 

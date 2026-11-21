@@ -158,13 +158,17 @@ namespace AutoDisplayMode.Core.Tests
         /// <summary>兩種使用來源都選。</summary>
         public const UsageSources Both = UsageSources.MouseKeyboard | UsageSources.Audio;
 
-        public static string Idle(int from, int to, int amount, UsageSources sources = MouseOrKeyboard, IdleUnit unit = IdleUnit.Minutes) =>
+        public static string Idle(int from, int to, int amount, UsageSources sources = MouseOrKeyboard, IdleUnit unit = IdleUnit.Minutes,
+            bool forced = false) =>
             Harness.Cfg("From=" + from, "Condition=Idle", "IdleTime=" + amount, "IdleUnit=" + unit,
-                "MouseKeyboard=" + Flag(sources, MouseOrKeyboard), "Audio=" + Flag(sources, Audio), "To=" + to);
+                "MouseKeyboard=" + Flag(sources, MouseOrKeyboard), "Audio=" + Flag(sources, Audio), "To=" + to) + Forced(forced);
 
-        public static string Usage(int from, int to, UsageSources sources = MouseOrKeyboard) =>
+        public static string Usage(int from, int to, UsageSources sources = MouseOrKeyboard, bool forced = false) =>
             Harness.Cfg("From=" + from, "Condition=UsageDetected",
-                "MouseKeyboard=" + Flag(sources, MouseOrKeyboard), "Audio=" + Flag(sources, Audio), "To=" + to);
+                "MouseKeyboard=" + Flag(sources, MouseOrKeyboard), "Audio=" + Flag(sources, Audio), "To=" + to) + Forced(forced);
+
+        /// <summary>有勾強制時寫 Forced=1；沒勾時不寫（與舊 cfg 相同，應當成 0）。</summary>
+        static string Forced(bool forced) => forced ? Harness.Cfg("Forced=1") : "";
 
         static string Flag(UsageSources sources, UsageSources flag) => (sources & flag) != 0 ? "1" : "0";
     }

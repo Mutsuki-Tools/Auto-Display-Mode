@@ -130,6 +130,16 @@ namespace AutoDisplayMode.Core
         IEnumerable<SwitchCondition> ConditionsFromCurrentMode() =>
             config.SwitchConditions.Where(s => s.FromModeId == config.CurrentModeId);
 
+        /// <summary>
+        /// 現在會被檢查的切換條件（依表格順序）：來源模式等於目前模式，且自動切換開啟、設定視窗沒開，或這條有勾強制。
+        /// 切換中、緩衝期與失敗後的暫停期另外判斷。
+        /// </summary>
+        IEnumerable<SwitchCondition> ConditionsToCheck()
+        {
+            bool all = config.AutoSwitch && !settingsOpen;
+            return ConditionsFromCurrentMode().Where(s => all || s.Forced);
+        }
+
         // ------------------------------------------------------------
         //  啟動與每秒檢查
         // ------------------------------------------------------------
@@ -170,9 +180,11 @@ namespace AutoDisplayMode.Core
 
             ApplyHookPolicy();
 
-            if (!config.AutoSwitch || IsSwitching || settingsOpen || now < ignoreUntilMs) return;
+            if (IsSwitching || now < ignoreUntilMs) return;
 
-            foreach (SwitchCondition s in ConditionsFromCurrentMode())
+            // 自動切換關閉或設定視窗開著時只檢查有勾強制的切換條件。設定視窗開著時切換不影響編輯中的副本：
+            // 套用時目前模式以協調者為準（見 ApplySettings）
+            foreach (SwitchCondition s in ConditionsToCheck())
             {
                 ModeConfig? target = config.FindMode(s.ToModeId);
                 if (target == null || !IsSatisfied(s, now, hookUsage, audioUsage)) continue;
@@ -198,12 +210,12 @@ namespace AutoDisplayMode.Core
         }
 
         /// <summary>
-        /// 只在「自動切換開 + 沒有在切換 + 設定視窗沒開 + 目前模式是某條『偵測到使用 + 鍵盤滑鼠』切換條件的來源模式」時
-        /// 安裝滑鼠與鍵盤鉤子，其他情況完全不掛（不影響遊戲的輸入延遲）。
+        /// 只在「沒有在切換 + 會被檢查的切換條件（<see cref="ConditionsToCheck"/>）中有『偵測到使用 + 鍵盤滑鼠』」時
+        /// 安裝滑鼠與鍵盤鉤子，其他情況完全不掛（不影響遊戲的輸入延遲）。自動切換關閉或設定視窗開著時，只看有勾強制的條件。
         /// </summary>
         void ApplyHookPolicy()
         {
-            bool need = config.AutoSwitch && !IsSwitching && !settingsOpen && ConditionsFromCurrentMode().Any(s =>
+            bool need = !IsSwitching && ConditionsToCheck().Any(s =>
                 s.Kind == SwitchConditionKind.UsageDetected && s.Uses(UsageSources.MouseKeyboard));
             signals.ApplyHookPolicy(new InputHookPolicy(need, ignoreUntilMs, config.MouseMoveThreshold, config.IgnoreRemoteInput));
         }
@@ -436,10 +448,10 @@ namespace AutoDisplayMode.Core
         //  設定視窗
         // ------------------------------------------------------------
 
-        /// <summary>設定視窗開著（暫停自動切換、停用重新載入 cfg 與從工作列擷取）。</summary>
+        /// <summary>設定視窗開著（暫停沒勾強制的切換條件、停用重新載入 cfg 與從工作列擷取）。</summary>
         public bool SettingsWindowOpen => settingsOpen;
 
-        /// <summary>設定視窗開啟時呼叫：暫停自動切換。</summary>
+        /// <summary>設定視窗開啟時呼叫：暫停沒勾強制的切換條件（有勾強制的照樣生效）。</summary>
         public void OnSettingsWindowOpened()
         {
             settingsOpen = true;

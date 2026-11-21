@@ -25,6 +25,7 @@ namespace AutoDisplayMode.Core.Tests
             "MouseKeyboard=1",
             "Audio=1",
             "To=3",
+            "Forced=1",
             "",
             "[Switch.10]",
             "From=3",
@@ -100,9 +101,9 @@ namespace AutoDisplayMode.Core.Tests
                 new SwitchCondition
                 {
                     FromModeId = 7, Kind = SwitchConditionKind.UsageDetected,
-                    Sources = UsageSources.MouseKeyboard | UsageSources.Audio, ToModeId = 3,
+                    Sources = UsageSources.MouseKeyboard | UsageSources.Audio, ToModeId = 3, Forced = true,
                 },
-            }, c.SwitchConditions);
+            }, c.SwitchConditions);   // 沒寫 Forced 的（舊 cfg）當成 0
 
             Assert.Equal(new[] { (3, "遊玩"), (7, "省電") }, c.Modes.Select(m => (m.Id, m.Name)));
             Assert.Equal((0x12AB0F, ManualAutoSwitch.On, UnlistedMonitors.Off),
@@ -146,10 +147,11 @@ namespace AutoDisplayMode.Core.Tests
             Assert.Contains("[Mode.3.Monitor.2]\r\nMonitor=GSM/5B7F/PORT:HDMI1\r\n", h.Store.Text);
             Assert.Contains(
                 "# 切換條件 1：「遊玩」閒置 2 小時（聲音）→「省電」\r\n[Switch.1]\r\nFrom=3\r\nCondition=Idle\r\n" +
-                "IdleTime=2\r\nIdleUnit=Hours\r\nMouseKeyboard=0\r\nAudio=1\r\nTo=7\r\n", h.Store.Text);
+                "IdleTime=2\r\nIdleUnit=Hours\r\nMouseKeyboard=0\r\nAudio=1\r\nTo=7\r\nForced=0\r\n", h.Store.Text);
             Assert.Contains(   // 偵測到使用不寫閒置時間
-                "# 切換條件 2：「省電」偵測到使用（鍵盤滑鼠、聲音）→「遊玩」\r\n[Switch.2]\r\nFrom=7\r\nCondition=UsageDetected\r\n" +
-                "MouseKeyboard=1\r\nAudio=1\r\nTo=3\r\n", h.Store.Text);
+                "# 切換條件 2：「省電」偵測到使用（鍵盤滑鼠、聲音）→「遊玩」（強制）\r\n[Switch.2]\r\nFrom=7\r\nCondition=UsageDetected\r\n" +
+                "MouseKeyboard=1\r\nAudio=1\r\nTo=3\r\nForced=1\r\n", h.Store.Text);
+            Assert.Contains("#   Forced         強制", h.Store.Text);
             Assert.DoesNotContain("# 使用者的註解", h.Store.Text);
         }
 

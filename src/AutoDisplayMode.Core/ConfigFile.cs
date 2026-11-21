@@ -194,7 +194,7 @@ namespace AutoDisplayMode.Core
         }
 
         /// <summary>
-        /// 讀取一條切換條件。沒寫的鍵用預設值（閒置 10 分鐘、只選鍵盤滑鼠）；
+        /// 讀取一條切換條件。沒寫的鍵用預設值（閒置 10 分鐘、只選鍵盤滑鼠、不強制）；
         /// Condition 寫了無法辨識的值時 <paramref name="error"/> 為原因（不默默當成閒置），否則為 null。
         /// </summary>
         static SwitchCondition ReadCondition(List<(string Key, string Value)> values, out string? error)
@@ -216,6 +216,7 @@ namespace AutoDisplayMode.Core
                     case "idleunit": s = s with { IdleUnit = ParseEnum(val, s.IdleUnit) }; break;
                     case "mousekeyboard": mouseKeyboard = ParseBool(val, mouseKeyboard); break;
                     case "audio": audio = ParseBool(val, audio); break;
+                    case "forced": s = s with { Forced = ParseBool(val, s.Forced) }; break;
                 }
             }
             s = s with
@@ -391,7 +392,8 @@ namespace AutoDisplayMode.Core
             Line();
 
             Title("切換條件");
-            Line("# 自動切換開啟時，只檢查來源模式等於目前模式的切換條件，依 [Switch.N] 的 N 由小到大，第一條成立的就切換。");
+            Line("# 只檢查來源模式等於目前模式的切換條件，依 [Switch.N] 的 N 由小到大，第一條成立的就切換。");
+            Line("# 自動切換關閉或設定視窗開著時，只檢查 Forced=1 的切換條件。");
             Line("# 每次切換完成後所有閒置計時歸零，並有 10 秒緩衝期。");
             Line("#   From           來源模式（填 [Mode.N] 的 N）");
             Line("#   Condition      Idle（閒置）或 UsageDetected（偵測到使用）");
@@ -400,6 +402,7 @@ namespace AutoDisplayMode.Core
             Line("#   MouseKeyboard  使用來源「鍵盤滑鼠」（1=選，0=不選）");
             Line("#   Audio          使用來源「聲音」（1=選，0=不選；聲音要持續 AudioSeconds 秒才算使用）");
             Line("#   To             目標模式（填 [Mode.N] 的 N，不可與來源模式相同）");
+            Line("#   Forced         強制（1=是，0=否；沒寫時為 0）：即使自動切換關閉、設定視窗開著，這條也照樣生效");
             Line("# 閒置：所選的使用來源全部都沒有使用，持續 IdleTime。偵測到使用：所選的使用來源任一個出現使用就成立。");
             Line("# 例：");
             Line("#   [Switch.1]");
@@ -410,6 +413,7 @@ namespace AutoDisplayMode.Core
             Line("#   MouseKeyboard=1");
             Line("#   Audio=1");
             Line("#   To=2");
+            Line("#   Forced=0");
             int n = 0;
             foreach (SwitchCondition s in c.SwitchConditions)
             {
@@ -427,6 +431,7 @@ namespace AutoDisplayMode.Core
                 Line("MouseKeyboard=" + Bool(s.Uses(UsageSources.MouseKeyboard)));
                 Line("Audio=" + Bool(s.Uses(UsageSources.Audio)));
                 Line("To=" + Int(s.ToModeId));
+                Line("Forced=" + Bool(s.Forced));
             }
 
             if (c.Modes.Count > 0)

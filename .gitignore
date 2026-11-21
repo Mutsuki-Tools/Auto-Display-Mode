@@ -1,5 +1,9 @@
-# 編譯產物（由 build.bat 建置後複製到這裡）
-AutoDisplayMode.exe
+# 程式資料夾：build.bat 把 exe 與驅動檔的複本放進 release/，只有 cfg 納入 git
+/release/*
+!/release/AutoDisplayMode.cfg
+
+# 舊版 build.bat 複製到專案根目錄的 exe
+/AutoDisplayMode.exe
 
 # dotnet build / dotnet test 的輸出
 bin/

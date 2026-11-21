@@ -7,8 +7,9 @@ namespace AutoDisplayMode.Settings
 {
     /// <summary>
     /// 設定視窗：各分頁修改暫存在視窗內的設定副本，按「套用」或「確定」才交給協調者寫入 cfg，按「取消」則放棄。
-    /// 左下角「說明」（或 F1）顯示目前分頁的說明（<see cref="SettingsPage.HelpText"/>）。
-    /// 開啟與關閉時通知協調者（暫停／恢復自動切換）由 <see cref="TrayApp"/> 負責。
+    /// 左下角「說明」（或 F1）顯示目前分頁的說明（<see cref="SettingsPage.HelpText"/>），右邊在有未套用的變更時顯示提醒；
+    /// 有未套用的變更時，按「取消」或 ✕ 先確認是否放棄。
+    /// 開啟與關閉時通知協調者（暫停／恢復沒勾強制的切換條件）由 <see cref="TrayApp"/> 負責。
     /// </summary>
     sealed class SettingsForm : Form
     {
@@ -16,10 +17,12 @@ namespace AutoDisplayMode.Settings
         readonly SettingsPage[] pages;
         readonly ModesPage modesPage;   // 套用時提供在視窗中擷取的模式
         readonly Button applyButton;
+        readonly Label pendingLabel;    // 「有尚未套用的變更」
         readonly AppConfig draft;
         readonly TabControl tabs;
         readonly string appTitle;
         bool showingHelp;
+        bool discardOnClose;   // 關閉時不確認（程式結束時）
 
         public SettingsForm(AppCoordinator app, Icon icon, string appTitle)
         {
@@ -54,7 +57,7 @@ namespace AutoDisplayMode.Settings
             foreach (SettingsPage page in pages)
             {
                 page.Load(draft);
-                page.Edited += delegate { applyButton.Enabled = true; };
+                page.Edited += delegate { SetPending(true); };
                 tabs.TabPages.Add(page);
             }
             // 離開分頁前送出還沒確認的輸入；切換分頁時重新顯示副本，反映其他分頁的修改（例如模式改名後，下拉選單顯示新名稱）
@@ -78,11 +81,24 @@ namespace AutoDisplayMode.Settings
             help.Anchor = AnchorStyles.Left;
             help.Click += delegate { ShowHelp(); };
 
-            var bottom = new TableLayoutPanel { Dock = DockStyle.Bottom, AutoSize = true, ColumnCount = 2, Padding = new Padding(6) };
+            // 「說明」右邊：有未套用的變更時顯示，套用成功後消失
+            pendingLabel = new Label
+            {
+                Text = "有尚未套用的變更",
+                AutoSize = true,
+                Anchor = AnchorStyles.Left,
+                ForeColor = Color.Firebrick,
+                Margin = new Padding(6, 0, 6, 0),
+                Visible = false,
+            };
+
+            var bottom = new TableLayoutPanel { Dock = DockStyle.Bottom, AutoSize = true, ColumnCount = 3, Padding = new Padding(6) };
+            bottom.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
             bottom.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
             bottom.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
             bottom.Controls.Add(help, 0, 0);
-            bottom.Controls.Add(buttons, 1, 0);
+            bottom.Controls.Add(pendingLabel, 1, 0);
+            bottom.Controls.Add(buttons, 2, 0);
 
             Controls.Add(tabs);
             Controls.Add(bottom);
@@ -106,11 +122,40 @@ namespace AutoDisplayMode.Settings
                 MessageBox.Show(this, "無法套用設定：\n" + error, Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return false;
             }
-            applyButton.Enabled = false;
+            SetPending(false);
             foreach (SettingsPage page in pages) page.OnApplied();
             // 套用後模式依順序重新編號（副本也一樣）：重新顯示目前的分頁，其他分頁切換過去時會重新顯示
             (tabs.SelectedTab as SettingsPage)?.Load(draft);
             return true;
+        }
+
+        /// <summary>有沒有未套用的變更：「套用」按鈕與「有尚未套用的變更」提醒一起切換。</summary>
+        void SetPending(bool pending)
+        {
+            applyButton.Enabled = pending;
+            pendingLabel.Visible = pending;
+        }
+
+        /// <summary>程式結束時關閉：放棄未套用的變更，不確認。</summary>
+        public void CloseDiscardingChanges()
+        {
+            discardOnClose = true;
+            Close();
+        }
+
+        /// <summary>
+        /// 使用者按「取消」、✕ 或 Esc 關閉時，有未套用的變更就先確認；選「否」留在設定視窗。
+        /// 「確定」會先套用（成功後沒有未套用的變更），Windows 關機與程式結束時不確認。
+        /// </summary>
+        protected override void OnFormClosing(FormClosingEventArgs e)
+        {
+            if (e.CloseReason == CloseReason.UserClosing && !discardOnClose && applyButton.Enabled)
+            {
+                DialogResult r = MessageBox.Show(this, "要放棄尚未套用的變更嗎？", Text,
+                    MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button2);
+                if (r != DialogResult.Yes) e.Cancel = true;
+            }
+            base.OnFormClosing(e);
         }
 
         /// <summary>顯示目前分頁的說明（「說明」按鈕與 F1）。</summary>

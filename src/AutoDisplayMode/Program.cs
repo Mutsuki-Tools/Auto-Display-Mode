@@ -1,5 +1,6 @@
 // AutoDisplayMode - 省電螢幕自動切換工具
 // 建置：執行專案根目錄的 build.bat（需要 .NET SDK；產出的 exe 目標為 .NET Framework 4.8，Win10/11 內建）
+// 輸出到 release/：AutoDisplayMode.exe、旁邊的 AutoDisplayMode.cfg 與 drivers/sudovda/（整個資料夾就是可攜的程式資料夾）
 
 using System;
 using System.Threading;

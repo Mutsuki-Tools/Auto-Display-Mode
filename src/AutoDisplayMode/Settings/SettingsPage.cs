@@ -86,6 +86,9 @@ namespace AutoDisplayMode.Settings
             if (disposing) bold?.Dispose();
         }
 
+        /// <summary>介面上顯示的模式名稱：去掉前後空白，空白時顯示「（未命名）」。</summary>
+        protected static string DisplayName(ModeConfig m) => m.Name.Trim().Length > 0 ? m.Name.Trim() : "（未命名）";
+
         /// <summary>灰色的說明文字。</summary>
         protected static Label Hint(string text) => new()
         {

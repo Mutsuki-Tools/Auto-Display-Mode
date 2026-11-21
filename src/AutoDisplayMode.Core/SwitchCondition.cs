@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
+using System.Text;
 
 namespace AutoDisplayMode.Core
 {
@@ -55,6 +57,13 @@ namespace AutoDisplayMode.Core
         public long IdleMs => IdleAmount * (IdleUnit == IdleUnit.Hours ? 3_600_000L : 60_000L);
 
         public bool Uses(UsageSources source) => (Sources & source) != 0;
+
+        /// <summary>
+        /// 把使用者輸入的閒置時間文字轉成 <see cref="IdleAmount"/>：前後的空白不影響，全形數字（例如「１５」）視同半形；
+        /// 不是整數（例如「1.5」「abc」、空白、超出範圍）時回傳 0，讓 <see cref="Validate"/> 回報「閒置時間必須是正整數」。
+        /// </summary>
+        public static int ParseIdleAmount(string text) =>
+            int.TryParse(text.Normalize(NormalizationForm.FormKC).Trim(), NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out int n) ? n : 0;
 
         /// <summary>依 <paramref name="config"/> 中的模式檢查這條切換條件；有效時回傳 null，否則回傳無效的原因。</summary>
         public string? Validate(AppConfig config)

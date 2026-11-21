@@ -42,9 +42,9 @@ namespace AutoDisplayMode.Settings
             AcceptButton = ok;
             CancelButton = cancel;
 
-            // 票 07、08 在這裡加入其他分頁（順序：模式、螢幕配置、切換條件、一般設定）
+            // 票 08 的分頁加在模式與切換條件之間
             modesPage = new ModesPage(app);
-            pages = new SettingsPage[] { modesPage, new GeneralPage() };
+            pages = new SettingsPage[] { modesPage, new SwitchConditionsPage(app), new GeneralPage() };
 
             var tabs = new TabControl { Dock = DockStyle.Fill };
             foreach (SettingsPage page in pages)
@@ -53,7 +53,8 @@ namespace AutoDisplayMode.Settings
                 page.Edited += delegate { applyButton.Enabled = true; };
                 tabs.TabPages.Add(page);
             }
-            // 切換分頁時重新顯示副本，反映其他分頁的修改（例如模式改名後，下拉選單顯示新名稱）
+            // 離開分頁前送出還沒確認的輸入；切換分頁時重新顯示副本，反映其他分頁的修改（例如模式改名後，下拉選單顯示新名稱）
+            tabs.Deselecting += (_, e) => (e.TabPage as SettingsPage)?.CommitEdits();
             tabs.Selected += (_, e) => (e.TabPage as SettingsPage)?.Load(draft);
 
             var buttons = new FlowLayoutPanel

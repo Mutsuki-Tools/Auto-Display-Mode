@@ -122,6 +122,31 @@ namespace AutoDisplayMode.Core
         /// <summary>所有切換條件（依表格順序：同一來源模式的條件由上往下檢查，第一條成立的就執行）。</summary>
         public List<SwitchCondition> SwitchConditions { get; } = new();
 
+        /// <summary>是否可以新增切換條件：至少要有兩個模式。可以新增時回傳 null，否則回傳原因。</summary>
+        public string? SwitchConditionAddBlocker() =>
+            Modes.Count < 2 ? "至少要有兩個模式才能新增切換條件（來源模式與目標模式不能相同）" : null;
+
+        /// <summary>
+        /// 在最後新增一條來源模式為 <paramref name="fromModeId"/>（不存在時用第一個模式）、目標模式為另一個模式的切換條件，
+        /// 條件為預設的閒置 10 分鐘（滑鼠或鍵盤）。回傳新的切換條件。先以 <see cref="SwitchConditionAddBlocker"/> 確認可以新增。
+        /// </summary>
+        public SwitchCondition AddSwitchCondition(int fromModeId)
+        {
+            if (SwitchConditionAddBlocker() is string reason) throw new InvalidOperationException(reason);
+            int from = FindMode(fromModeId)?.Id ?? Modes[0].Id;
+            var s = new SwitchCondition { FromModeId = from, ToModeId = Modes.First(m => m.Id != from).Id };
+            SwitchConditions.Add(s);
+            return s;
+        }
+
+        /// <summary>把第 <paramref name="fromIndex"/> 條切換條件移到第 <paramref name="toIndex"/> 個位置（皆從 0 起算），改變評估順序。</summary>
+        public void MoveSwitchCondition(int fromIndex, int toIndex)
+        {
+            SwitchCondition s = SwitchConditions[fromIndex];
+            SwitchConditions.RemoveAt(fromIndex);
+            SwitchConditions.Insert(toIndex, s);
+        }
+
         /// <summary>
         /// 存檔前的檢查：一般設定在範圍內、目前模式（<paramref name="currentModeId"/>，以協調者記錄的為準）存在、
         /// 每條切換條件都有效。有效時回傳 null，否則回傳原因。
@@ -135,12 +160,17 @@ namespace AutoDisplayMode.Core
                 if (ValidateModeName(m.Id, m.Name) is string name) return name + "。";
             }
             if (FindMode(currentModeId) == null) return CurrentModeText + "。";
+            return InvalidSwitchConditions().FirstOrDefault();
+        }
+
+        /// <summary>每條無效的切換條件與原因，例如「第 2 條切換條件無效：來源模式與目標模式相同。」（依表格順序）。</summary>
+        public IEnumerable<string> InvalidSwitchConditions()
+        {
             for (int i = 0; i < SwitchConditions.Count; i++)
             {
                 if (SwitchConditions[i].Validate(this) is string reason)
-                    return "第 " + (i + 1) + " 條切換條件無效：" + reason + "。";
+                    yield return "第 " + (i + 1) + " 條切換條件無效：" + reason + "。";
             }
-            return null;
         }
 
         /// <summary>檢查一般設定是否在範圍內；有效時回傳 null，否則回傳原因。</summary>

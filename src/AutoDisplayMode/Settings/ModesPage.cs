@@ -396,8 +396,6 @@ namespace AutoDisplayMode.Settings
             e.DrawFocusRectangle();
         }
 
-        static string DisplayName(ModeConfig m) => m.Name.Trim().Length > 0 ? m.Name.Trim() : "（未命名）";
-
         static Color ToColor(int rgb) =>
             rgb == ModeConfig.NoColor ? SystemColors.Control : Color.FromArgb((rgb >> 16) & 0xFF, (rgb >> 8) & 0xFF, rgb & 0xFF);
 

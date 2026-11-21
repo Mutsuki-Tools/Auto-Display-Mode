@@ -1,0 +1,10 @@
+<Project>
+  <!-- 原型（票 02）：拋棄式程式，不套用專案根目錄的嚴格設定 -->
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+  </PropertyGroup>
+</Project>

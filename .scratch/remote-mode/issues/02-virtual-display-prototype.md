@@ -8,9 +8,9 @@
 
 **Status:** ready-for-human（需要安裝 WDK、系統管理員權限，以及實際用 Chrome 遠端桌面連線）
 
-- [ ] 記錄編譯環境（Visual Studio／WDK 版本）與步驟，做成可重複的腳本或說明，供日後換驅動版本時使用
-- [ ] 簽好的驅動檔與公開憑證放進 repo（位置自訂，例如 `drivers/sudovda/`），附上 SudoVDA 的授權聲明；私鑰已刪除
-- [ ] 一般 Windows 11 上能安裝（匯入憑證、建立裝置節點、安裝 INF），也能完整移除（含憑證）
+- [x] 記錄編譯環境（Visual Studio／WDK 版本）與步驟，做成可重複的腳本或說明，供日後換驅動版本時使用
+- [x] 簽好的驅動檔與公開憑證放進 repo（位置自訂，例如 `drivers/sudovda/`），附上 SudoVDA 的授權聲明；私鑰已刪除
+- [ ] 一般 Windows 11 上能安裝（匯入憑證、建立裝置節點、安裝 INF），也能完整移除（含憑證）；測試工具的安裝與移除只用 Windows 內建的 API（SetupAPI、`X509Store`），先驗證票 05 的可攜做法
 - [ ] 一般使用者權限就能新增、移除虛擬螢幕，並指定解析度與更新率；記錄實際可選的解析度清單
 - [ ] 心跳停止（測試程式被工作管理員結束）後，虛擬螢幕在幾秒內被移除；記錄實際秒數
 - [ ] 先建立虛擬螢幕再關閉所有螢幕，在只剩虛擬螢幕時用 Chrome 遠端桌面連線：看得到畫面、可以操作；記錄「調整桌面大小以符合」的行為
@@ -23,3 +23,26 @@
 ## Answer
 
 ## Comments
+
+### 2026-11-21 編譯完成，實測交給精靈
+
+#### 編譯環境
+
+- Visual Studio 2022 Community 17.14：另外加裝「Spectre 緩解程式庫」與「Windows Driver Kit」兩個元件。
+- WDK 10.0.26100.6584（winget `Microsoft.WindowsWDK.10.0.26100`）。
+- SudoVDA 固定在 commit `a4b09fa`（2025-04-15）。
+
+#### 產出
+
+- `drivers/sudovda/`：
+  - `build-driver.ps1`：取得原始碼、編譯、執行 `infverif`、以拋棄式憑證簽章，最後刪除私鑰。
+  - 簽好的 `x64/`、公開憑證 `AutoDisplayMode-SudoVDA.cer`、README、授權聲明。
+- 這個 WDK 版本內建的 INF 驗證會去載入不存在的 `x86\InfVerif.dll` 而報錯。腳本以 `SkipPackageVerification=true` 關掉它，改成直接執行 `infverif.exe /u`；結果為 VALID，只有一個常見的 WUDFRd 警告。
+
+#### 測試工具與精靈
+
+- `.scratch/remote-mode/prototype/VddProbe/`：拋棄式測試工具。
+  - 安裝與移除只用 Windows 內建的 API：SetupAPI、`UpdateDriverForPlugAndPlayDevices`、`DiUninstallDevice`、`SetupUninstallOEMInf`、`X509Store`。
+  - 其他功能：建立虛擬螢幕並送心跳、只留虛擬螢幕（solo）、監看虛擬螢幕何時消失、記錄鍵盤滑鼠鉤子收到的輸入有沒有注入旗標。
+- `.scratch/remote-mode/prototype/wizard.sh`：帶使用者跑完需要本人操作的 9 個階段。結果寫進 `.scratch/remote-mode/prototype-results.env`，紀錄檔放在 `prototype/logs/`。
+- 已先確認：`VddProbe detect` 能透過介面卡的硬體 ID 分辨各個虛擬顯示，例如 `Root\Parsec\VDA`、`root\MetaVirtualScreenDriver`。票 03 可以用 `Root\SudoMaker\SudoVDA` 排除我們的虛擬螢幕。

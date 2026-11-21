@@ -22,7 +22,7 @@
 - [ ] 使用者取消 UAC，或安裝、移除失敗時，顯示原因，狀態維持不變
 - [ ] 一般設定分頁的說明補上驅動的用途、安裝與移除，以及為什麼需要系統管理員權限
 - [ ] 把 `release/` 資料夾（exe＋drivers）複製到別的位置執行，也能正確找到驅動檔
-- [ ] VddProbe 拿掉 `install`／`uninstall` 指令，避免有兩套做法；精靈第 2、8、9 階段改成操作程式的介面
+- [x] VddProbe 拿掉 `install`／`uninstall` 指令，避免有兩套做法；精靈第 2、8、9 階段改成請使用者操作程式的介面（同時當作 UI 的手動測試），精靈不再自動安裝
 
 ### 驅動編譯
 
@@ -80,3 +80,15 @@
   - 看資料夾就知道裝的是哪一版。
 - 代價：搬到別台電腦時，要複製整個 `release/` 資料夾，不再只有單一 exe。
 - 可參考的實作：VddProbe 在 commit `ef23ecc` 中的 `Install`／`Uninstall`。
+
+### 2026-11-21 精靈改成操作程式的介面
+
+- 精靈的第 2、8、9 階段不再自動安裝或移除，改成請使用者在設定視窗的「一般設定」按「安裝驅動」或「移除驅動」，再由 VddProbe `status` 檢查結果。
+- 精靈從 `release/drivers/sudovda/` 找驅動檔，並確認 `release/AutoDisplayMode.exe` 存在。
+- 精靈也記錄使用者回報的 UI 結果：`UI_INSTALL_OK`／`UI_UNINSTALL_OK`／`UI_REINSTALL_OK` 與對應的 `*_NOTE`。
+- VddProbe 已拿掉 `install`／`uninstall`。
+- 要使用者跑精靈時，給完整的指令（在 PowerShell 貼上，要用 Git Bash 執行，不能用 WSL 的 `bash`）：
+
+```powershell
+& "C:\Program Files\Git\bin\bash.exe" "C:/Users/Jimmy/Desktop/工具/Auto Display Mode/.scratch/remote-mode/prototype/wizard.sh"
+```

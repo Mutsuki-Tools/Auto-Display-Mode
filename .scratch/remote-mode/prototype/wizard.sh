@@ -206,22 +206,24 @@ TOTAL_STAGES=9
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$DIR/../../.." && pwd)"
 PROBE="$DIR/VddProbe/bin/Release/net48/VddProbe.exe"
-DRV="$ROOT/drivers/sudovda"
+APP="$ROOT/release/AutoDisplayMode.exe"
+DRV="$ROOT/release/drivers/sudovda"
 LOGS="$DIR/logs"
 ENV_FILE="$ROOT/.scratch/remote-mode/prototype-results.env"
 mkdir -p "$LOGS"
 
 winpath() { cygpath -w "$1"; }
 
-# elevated LOG ARGS...：以系統管理員身分執行 VddProbe（會跳出 UAC），等它結束，輸出寫進 LOG
-elevated() {
-  local log="$1"; shift
-  local args="" a
-  for a in "$@"; do args+=" \"$a\""; done
-  args+=" \"--log=$(winpath "$log")\""
-  : > "$log"
-  P="$(winpath "$PROBE")" A="$args" powershell.exe -NoProfile -Command \
-    'try { $p = Start-Process -FilePath $env:P -ArgumentList $env:A -Verb RunAs -Wait -PassThru; exit $p.ExitCode } catch { Write-Host $_; exit 99 }'
+# ui_driver KEY "按鈕" "預期狀態"：請使用者在程式的設定視窗按下驅動按鈕（手動測試成品的介面），記錄結果
+ui_driver() {
+  step "在工作列的 Auto Display Mode 圖示按右鍵 → 設定 → 「一般設定」分頁。"
+  step "按「$2」，跳出 UAC 時按「是」。"
+  step "等設定視窗上的驅動狀態更新。"
+  pause "完成後按 Enter"
+  yesno "$1_OK" "設定視窗顯示「$3」了嗎？"
+  local note="$1_NOTE"
+  ask "$note" "過程中有錯誤訊息、卡住、或其他奇怪的地方嗎？（沒有就直接按 Enter）："
+  write_env "$note" "${!note:-}"
 }
 
 # start_bg LOG ARGS...：在背景執行 VddProbe，PID 存進 BG_PID
@@ -264,7 +266,9 @@ warn "萬一實體螢幕一直黑、手機也連不上：按 Win+P，選「延�
 warn "還是不行就重新開機：開機時不會有虛擬螢幕，實體螢幕一定會亮。"
 echo
 [[ -x "$PROBE" ]] || { warn "找不到 VddProbe.exe，請先請 Claude 編譯：$PROBE"; exit 1; }
-[[ -f "$DRV/x64/SudoVDA.inf" ]] || { warn "找不到驅動檔：$DRV/x64"; exit 1; }
+[[ -f "$APP" ]] || { warn "找不到程式：$APP（先執行 build.bat）"; exit 1; }
+[[ -f "$DRV/x64/SudoVDA.inf" ]] || { warn "找不到驅動檔：$DRV/x64（先執行 build.bat）"; exit 1; }
+step "確認 release\\AutoDisplayMode.exe（新版、有「安裝驅動」按鈕的版本）正在執行。"
 open_url "https://remotedesktop.google.com/access"
 step "在開啟的頁面確認這台電腦顯示為「線上」。"
 ask CRD_CLIENT "你會用什麼裝置連進來（例如 iPhone、Android 手機、筆電）："
@@ -272,14 +276,10 @@ write_env CRD_CLIENT "$CRD_CLIENT"
 confirm "都準備好了，要開始嗎？" || exit 0
 
 # ── 2 ────────────────────────────────────────────────────────────────────
-stage "安裝驅動"
-say "接下來會跳出 UAC（系統管理員權限），請按「是」。"
-say "安裝只用 Windows 內建的 API，跟日後成品 exe 幫新使用者安裝的方式相同。"
+stage "安裝驅動（用程式的介面）"
+say "這一步同時手動測試程式的「安裝驅動」功能。"
 display_devices > "$LOGS/display-devices-before.txt"
-pause "按 Enter 開始安裝"
-rc=0; elevated "$LOGS/install.log" install "$(winpath "$DRV")" || rc=$?
-write_env DRIVER_INSTALL_EXIT "$rc"
-indent "$LOGS/install.log"
+ui_driver UI_INSTALL "安裝驅動" "已安裝"
 "$PROBE" status > "$LOGS/status-after-install.txt" 2>&1 || true
 indent "$LOGS/status-after-install.txt"
 write_env DRIVER_INTERFACE "$(value "$LOGS/status-after-install.txt" 'INTERFACE=.*' | cut -d= -f2-)"
@@ -423,12 +423,9 @@ wait "$SLEEP_PID" 2>/dev/null || true
 pause
 
 # ── 8 ────────────────────────────────────────────────────────────────────
-stage "移除驅動"
-say "測試完整移除（裝置、驅動套件、憑證）。會跳出 UAC，請按「是」。"
-pause "按 Enter 開始移除"
-rc=0; elevated "$LOGS/uninstall.log" uninstall "$(winpath "$DRV")" || rc=$?
-write_env DRIVER_UNINSTALL_EXIT "$rc"
-indent "$LOGS/uninstall.log"
+stage "移除驅動（用程式的介面）"
+say "手動測試程式的「移除驅動」功能：裝置、驅動套件與憑證都要移除乾淨。"
+ui_driver UI_UNINSTALL "移除驅動" "未安裝"
 "$PROBE" status > "$LOGS/status-after-uninstall.txt" 2>&1 || true
 indent "$LOGS/status-after-uninstall.txt"
 write_env UNINSTALL_DEVICE_COUNT "$(value "$LOGS/status-after-uninstall.txt" 'DEVICE_COUNT=[0-9]*' | cut -d= -f2)"
@@ -442,11 +439,9 @@ fi
 pause
 
 # ── 9 ────────────────────────────────────────────────────────────────────
-stage "重新安裝"
-say "重新裝回驅動，留給票 03 開發使用。會跳出 UAC，請按「是」。"
-pause "按 Enter 開始安裝"
-rc=0; elevated "$LOGS/reinstall.log" install "$(winpath "$DRV")" || rc=$?
-write_env DRIVER_REINSTALL_EXIT "$rc"
+stage "重新安裝（用程式的介面）"
+say "重新裝回驅動，留給票 03 開發使用；同時確認移除後可以再次安裝。"
+ui_driver UI_REINSTALL "安裝驅動" "已安裝"
 "$PROBE" status > "$LOGS/status-after-reinstall.txt" 2>&1 || true
 indent "$LOGS/status-after-reinstall.txt"
 write_env REINSTALL_INTERFACE "$(value "$LOGS/status-after-reinstall.txt" 'INTERFACE=.*' | cut -d= -f2-)"

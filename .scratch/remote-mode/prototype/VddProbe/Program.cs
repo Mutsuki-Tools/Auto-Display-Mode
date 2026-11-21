@@ -1,8 +1,6 @@
 // 票 02 的拋棄式測試工具（不進產品）。
 //
 //   VddProbe status                 驅動、裝置介面、憑證、虛擬螢幕的狀態
-//   VddProbe install <drvdir>       （需系統管理員）匯入憑證、建立裝置節點、安裝 INF（只用 Windows 內建 API）
-//   VddProbe uninstall <drvdir>     （需系統管理員）移除裝置、驅動套件與憑證
 //   VddProbe hold [w h hz]          建立虛擬螢幕並每秒送心跳，直到 `VddProbe stop`
 //   VddProbe solo [w h hz]          同 hold，另外關閉所有實體螢幕只留虛擬螢幕；停止時還原
 //   VddProbe stop                   通知執行中的 hold/solo 正常結束
@@ -45,15 +43,13 @@ static class Program
             switch (cmd)
             {
                 case "status": return Status();
-                case "install": return Install(Arg(args, 1));
-                case "uninstall": return Uninstall(Arg(args, 1));
                 case "hold": return Hold(args, solo: false);
                 case "solo": return Hold(args, solo: true);
                 case "stop": return Stop();
                 case "watch": return Watch(args.Length > 1 ? int.Parse(args[1]) : 20);
                 case "detect": return Detect();
                 default:
-                    Console.WriteLine("usage: VddProbe status|install <dir>|uninstall <dir>|hold [w h hz]|solo [w h hz]|stop|watch [s]|detect");
+                    Console.WriteLine("usage: VddProbe status|hold [w h hz]|solo [w h hz]|stop|watch [s]|detect");
                     return 2;
             }
         }
@@ -112,86 +108,7 @@ static class Program
         return 0;
     }
 
-    // ================================================================
-    //  install / uninstall（只用 Windows 內建 API）
-    // ================================================================
-
-    static int Install(string dir)
-    {
-        string inf = Path.GetFullPath(File.Exists(Path.Combine(dir, "x64", "SudoVDA.inf")) ? Path.Combine(dir, "x64", "SudoVDA.inf") : Path.Combine(dir, "SudoVDA.inf"));
-        string cer = Directory.GetFiles(dir, "*.cer").Single();
-        var cert = new X509Certificate2(cer);
-        foreach (var name in new[] { StoreName.Root, StoreName.TrustedPublisher })
-        {
-            var store = new X509Store(name, StoreLocation.LocalMachine);
-            store.Open(OpenFlags.ReadWrite);
-            store.Add(cert);
-            store.Close();
-            Log("imported cert into LocalMachine\\" + name + ": " + cert.Thumbprint);
-        }
-
-        if (FindDevices().Count == 0)
-        {
-            var classGuid = Guid.Empty;
-            var className = new StringBuilder(256);
-            if (!SetupDiGetINFClass(inf, ref classGuid, className, className.Capacity, out _)) throw new Win32Exception();
-            IntPtr set = SetupDiCreateDeviceInfoList(ref classGuid, IntPtr.Zero);
-            if (set == INVALID_HANDLE) throw new Win32Exception();
-            try
-            {
-                var info = new SP_DEVINFO_DATA { cbSize = Marshal.SizeOf(typeof(SP_DEVINFO_DATA)) };
-                if (!SetupDiCreateDeviceInfo(set, className.ToString(), ref classGuid, null, IntPtr.Zero, DICD_GENERATE_ID, ref info)) throw new Win32Exception();
-                byte[] hwid = Encoding.Unicode.GetBytes(HardwareId + "\0\0");
-                if (!SetupDiSetDeviceRegistryProperty(set, ref info, SPDRP_HARDWAREID, hwid, hwid.Length)) throw new Win32Exception();
-                if (!SetupDiCallClassInstaller(DIF_REGISTERDEVICE, set, ref info)) throw new Win32Exception();
-                Log("created root device node (" + className + ")");
-            }
-            finally { SetupDiDestroyDeviceInfoList(set); }
-        }
-        else Log("device node already exists");
-
-        if (!UpdateDriverForPlugAndPlayDevices(IntPtr.Zero, HardwareId, inf, INSTALLFLAG_FORCE, out bool reboot)) throw new Win32Exception();
-        Log("driver installed" + (reboot ? " (REBOOT REQUIRED)" : ""));
-        return 0;
-    }
-
-    static int Uninstall(string dir)
-    {
-        int removed = 0;
-        ForEachDevice((set, info) =>
-        {
-            if (!DiUninstallDevice(IntPtr.Zero, set, ref info, 0, out bool reboot)) throw new Win32Exception();
-            removed++;
-            if (reboot) Log("device removal needs reboot");
-        });
-        Log("removed " + removed + " device(s)");
-
-        // 驅動存放區中的套件：找出原始名稱是 SudoVDA.inf 的 oemNN.inf
-        string infDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "INF");
-        foreach (string oem in Directory.GetFiles(infDir, "oem*.inf"))
-        {
-            string text;
-            try { text = File.ReadAllText(oem); } catch { continue; }
-            if (text.IndexOf("SudoMaker", StringComparison.OrdinalIgnoreCase) < 0 || text.IndexOf("SudoVDA", StringComparison.OrdinalIgnoreCase) < 0) continue;
-            if (!SetupUninstallOEMInf(Path.GetFileName(oem), SUOI_FORCEDELETE, IntPtr.Zero)) throw new Win32Exception();
-            Log("removed driver package " + Path.GetFileName(oem));
-        }
-
-        string cer = Directory.GetFiles(dir, "*.cer").Single();
-        string thumb = new X509Certificate2(cer).Thumbprint;
-        foreach (var name in new[] { StoreName.Root, StoreName.TrustedPublisher })
-        {
-            var store = new X509Store(name, StoreLocation.LocalMachine);
-            store.Open(OpenFlags.ReadWrite);
-            foreach (var c in store.Certificates.Find(X509FindType.FindByThumbprint, thumb, false).Cast<X509Certificate2>().ToList())
-            {
-                store.Remove(c);
-                Log("removed cert from LocalMachine\\" + name + ": " + c.Thumbprint);
-            }
-            store.Close();
-        }
-        return 0;
-    }
+    // 驅動的安裝與移除已移到成品（票 02）；原本的實作見 commit ef23ecc。
 
     static List<string> FindDevices()
     {
@@ -630,7 +547,7 @@ static class Program
 
     static readonly IntPtr INVALID_HANDLE = new IntPtr(-1);
     const uint DIGCF_PRESENT = 0x2, DIGCF_ALLCLASSES = 0x4, DIGCF_DEVICEINTERFACE = 0x10;
-    const uint DICD_GENERATE_ID = 0x1, SPDRP_HARDWAREID = 0x1, DIF_REGISTERDEVICE = 0x19, INSTALLFLAG_FORCE = 0x1, SUOI_FORCEDELETE = 0x1;
+    const uint SPDRP_HARDWAREID = 0x1;
     const uint CM_DRP_HARDWAREID = 0x2;
     const uint QDC_ALL_PATHS = 0x1, QDC_ONLY_ACTIVE_PATHS = 0x2, DISPLAYCONFIG_PATH_ACTIVE = 0x1, DISPLAYCONFIG_PATH_MODE_IDX_INVALID = 0xFFFFFFFF;
     const uint SDC_TOPOLOGY_EXTEND = 0x4, SDC_USE_SUPPLIED_DISPLAY_CONFIG = 0x20, SDC_APPLY = 0x80, SDC_SAVE_TO_DATABASE = 0x200, SDC_ALLOW_CHANGES = 0x400;
@@ -647,14 +564,6 @@ static class Program
     [DllImport("setupapi.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern bool SetupDiGetDeviceRegistryProperty(IntPtr set, ref SP_DEVINFO_DATA info, uint property, out uint type, byte[] buffer, int size, out int required);
     [DllImport("setupapi.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern bool SetupDiGetDeviceInstanceId(IntPtr set, ref SP_DEVINFO_DATA info, StringBuilder id, int size, out int required);
     [DllImport("setupapi.dll", SetLastError = true)] static extern bool SetupDiDestroyDeviceInfoList(IntPtr set);
-    [DllImport("setupapi.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern bool SetupDiGetINFClass(string inf, ref Guid classGuid, StringBuilder className, int size, out int required);
-    [DllImport("setupapi.dll", SetLastError = true)] static extern IntPtr SetupDiCreateDeviceInfoList(ref Guid classGuid, IntPtr hwnd);
-    [DllImport("setupapi.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern bool SetupDiCreateDeviceInfo(IntPtr set, string name, ref Guid classGuid, string description, IntPtr hwnd, uint flags, ref SP_DEVINFO_DATA info);
-    [DllImport("setupapi.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern bool SetupDiSetDeviceRegistryProperty(IntPtr set, ref SP_DEVINFO_DATA info, uint property, byte[] buffer, int size);
-    [DllImport("setupapi.dll", SetLastError = true)] static extern bool SetupDiCallClassInstaller(uint function, IntPtr set, ref SP_DEVINFO_DATA info);
-    [DllImport("setupapi.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern bool SetupUninstallOEMInf(string inf, uint flags, IntPtr reserved);
-    [DllImport("newdev.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern bool UpdateDriverForPlugAndPlayDevices(IntPtr hwnd, string hardwareId, string infPath, uint flags, out bool reboot);
-    [DllImport("newdev.dll", SetLastError = true)] static extern bool DiUninstallDevice(IntPtr hwnd, IntPtr set, ref SP_DEVINFO_DATA info, uint flags, out bool reboot);
     [DllImport("cfgmgr32.dll", CharSet = CharSet.Unicode)] static extern uint CM_Locate_DevNode(out uint devInst, string id, uint flags);
     [DllImport("cfgmgr32.dll", CharSet = CharSet.Unicode, EntryPoint = "CM_Get_DevNode_Registry_PropertyW")] static extern uint CM_Get_DevNode_Registry_Property(uint devInst, uint property, out uint type, byte[] buffer, ref uint length, uint flags);
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern IntPtr CreateFile(string name, uint access, uint share, IntPtr sa, uint disposition, uint flags, IntPtr template);

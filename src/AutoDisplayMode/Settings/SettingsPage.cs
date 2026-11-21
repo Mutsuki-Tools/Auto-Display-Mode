@@ -43,6 +43,9 @@ namespace AutoDisplayMode.Settings
 
         protected abstract void OnLoad(AppConfig draft);
 
+        /// <summary>這個分頁的說明：設定視窗按「說明」或 F1 時顯示目前分頁的這段文字。</summary>
+        public abstract string HelpText { get; }
+
         /// <summary>套用前呼叫：把還沒確認的輸入（例如數字欄位中剛打的字）寫回副本。</summary>
         public virtual void CommitEdits()
         {

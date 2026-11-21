@@ -9,14 +9,18 @@ using AutoDisplayMode.Core;
 namespace AutoDisplayMode.Settings
 {
     /// <summary>
-    /// 螢幕配置畫布：依比例畫出接上的螢幕，開啟的螢幕依座標擺放，關閉的螢幕以灰色排在下方一列。
+    /// 螢幕配置畫布：依比例畫出接上的螢幕，開啟的螢幕依座標擺放，關閉的螢幕以灰色排在下方一列；
+    /// 此模式沒有記錄的螢幕以橘色虛線框標示「此模式未設定」。
     /// 點一下選取；拖拉開啟的螢幕時靠近其他螢幕的邊會磁吸貼齊（按住 Alt 不貼齊），放開時觸發 <see cref="Moved"/>。
     /// 畫布只負責顯示與操作，螢幕設定由分頁寫回副本後再以 <see cref="SetItems"/> 交回。
     /// </summary>
     sealed class LayoutCanvas : Control
     {
-        /// <summary>畫布上的一台螢幕：識別、顯示的名稱、目前的螢幕設定。</summary>
-        public sealed record Item(MonitorId Id, string Label, MonitorSettings Shown);
+        /// <summary>
+        /// 畫布上的一台螢幕：識別、顯示的名稱、目前的螢幕設定，以及是否「此模式未設定」
+        /// （此時 <paramref name="Shown"/> 是套用時依「未記錄的螢幕」會有的狀態）。
+        /// </summary>
+        public sealed record Item(MonitorId Id, string Label, MonitorSettings Shown, bool Unrecorded);
 
         /// <summary>桌面座標換算到畫布座標的比例與位移，以及每台螢幕在桌面座標中的矩形。</summary>
         sealed record View(double Scale, double OffsetX, double OffsetY, Dictionary<MonitorId, Rectangle> Rects)
@@ -149,19 +153,29 @@ namespace AutoDisplayMode.Settings
             bool isSelected = item.Id == selected;
             r.Inflate(-1, -1);
 
-            Color fill = !s.Enabled ? Color.Gainsboro : isSelected ? Color.FromArgb(0xC6, 0xDD, 0xF7) : Color.FromArgb(0xEE, 0xF4, 0xFB);
+            Color fill = !s.Enabled ? Color.Gainsboro
+                : isSelected ? Color.FromArgb(0xC6, 0xDD, 0xF7)
+                : item.Unrecorded ? Color.FromArgb(0xFD, 0xF1, 0xE0)
+                : Color.FromArgb(0xEE, 0xF4, 0xFB);
             using (var b = new SolidBrush(fill)) g.FillRectangle(b, r);
 
-            int width = isSelected || overlap ? Math.Max(2, Unit / 6) : 1;
-            Color border = overlap ? Color.Firebrick : isSelected ? SystemColors.Highlight : SystemColors.ControlDark;
+            int width = isSelected || overlap || item.Unrecorded ? Math.Max(2, Unit / 6) : 1;
+            Color border = overlap ? Color.Firebrick
+                : isSelected ? SystemColors.Highlight
+                : item.Unrecorded ? Color.DarkOrange
+                : SystemColors.ControlDark;
             using (var p = new Pen(border, width) { Alignment = PenAlignment.Inset })
             {
-                if (!s.Enabled) p.DashStyle = DashStyle.Dash;
+                if (!s.Enabled || item.Unrecorded) p.DashStyle = DashStyle.Dash;
                 g.DrawRectangle(p, r.X, r.Y, r.Width - 1, r.Height - 1);
             }
 
-            string text = item.Label + "\n" + s.Width + " x " + s.Height +
-                          (!s.Enabled ? "\n（關閉）" : s.Primary ? "\n主螢幕" : "");
+            // 狀態只佔一列，小矩形中才不會被切掉（未設定的螢幕不會是主螢幕）
+            string status = item.Unrecorded ? "此模式未設定" + (s.Enabled ? "" : "（關閉）")
+                : !s.Enabled ? "（關閉）"
+                : s.Primary ? "主螢幕"
+                : "";
+            string text = item.Label + "\n" + s.Width + " x " + s.Height + (status.Length > 0 ? "\n" + status : "");
             Rectangle textBounds = Rectangle.Inflate(r, -4, -2);
             TextRenderer.DrawText(g, text, Font, textBounds, s.Enabled ? SystemColors.ControlText : SystemColors.GrayText,
                 TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.WordBreak |

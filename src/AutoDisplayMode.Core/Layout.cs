@@ -19,9 +19,14 @@ namespace AutoDisplayMode.Core
         /// <item>警告（有傳入 <paramref name="connected"/> 時）：此模式沒記錄、套用時維持開啟的接上螢幕，
         ///   以目前位置會與記錄的螢幕重疊。是否重疊要看套用當時的狀態，所以只警告。</item>
         /// </list>
+        /// 有傳入 <paramref name="connected"/> 時，訊息中沒接上的螢幕名稱後面加上「（未接上）」。
         /// </summary>
         public static LayoutReport Check(ModeConfig mode, IReadOnlyList<DetectedMonitor>? connected = null)
         {
+            // 有傳入接上的螢幕時，訊息標出沒接上的螢幕（畫布上看不到，要在「未接上的螢幕」清單中刪除或對應）
+            string Name(MonitorSettings m) =>
+                connected != null && !connected.Any(d => d.Id == m.Id) ? Label(m) + "（未接上）" : Label(m);
+
             var errors = new List<string>();
             var warnings = new List<string>();
             List<MonitorSettings> on = mode.Monitors.Where(m => m.Enabled).ToList();
@@ -37,12 +42,12 @@ namespace AutoDisplayMode.Core
             List<MonitorSettings> primaries = on.Where(m => m.Primary).ToList();
             if (primaries.Count == 0) errors.Add("沒有主螢幕");
             else if (primaries.Count > 1) errors.Add("主螢幕只能有一台");
-            else if (primaries[0].X != 0 || primaries[0].Y != 0) errors.Add("主螢幕「" + Label(primaries[0]) + "」必須位於 (0,0)");
+            else if (primaries[0].X != 0 || primaries[0].Y != 0) errors.Add("主螢幕「" + Name(primaries[0]) + "」必須位於 (0,0)");
 
             for (int i = 0; i < on.Count; i++)
                 for (int j = i + 1; j < on.Count; j++)
                     if (Overlaps(on[i], on[j]))
-                        errors.Add("「" + Label(on[i]) + "」與「" + Label(on[j]) + "」重疊");
+                        errors.Add("「" + Name(on[i]) + "」與「" + Name(on[j]) + "」重疊");
 
             // 空隙：從主螢幕出發，沿著相接的邊（只有角落相接不算）走不到的螢幕
             var reached = new HashSet<MonitorSettings> { primaries.Count > 0 ? primaries[0] : on[0] };
@@ -56,15 +61,15 @@ namespace AutoDisplayMode.Core
             }
             List<MonitorSettings> apart = on.Where(m => !reached.Contains(m)).ToList();
             if (apart.Count > 0)
-                warnings.Add("螢幕之間有空隙：" + string.Join("、", apart.Select(m => "「" + Label(m) + "」")) + "沒有與主螢幕相連，游標無法移過去。");
+                warnings.Add("螢幕之間有空隙：" + string.Join("、", apart.Select(m => "「" + Name(m) + "」")) + "沒有與主螢幕相連，游標無法移過去。");
 
             foreach (DetectedMonitor d in connected ?? new DetectedMonitor[0])
             {
-                if (mode.Monitors.Exists(m => m.Id == d.Id)) continue;
+                if (mode.Records(d.Id)) continue;
                 MonitorSettings kept = mode.SettingsFor(d);
                 if (!kept.Enabled) continue;
                 foreach (MonitorSettings m in on.Where(m => Overlaps(m, kept)))
-                    warnings.Add("「" + Label(kept) + "」沒有記錄在此模式中，套用時維持現狀，會與「" + Label(m) + "」重疊。");
+                    warnings.Add("「" + Name(kept) + "」沒有記錄在此模式中，套用時維持現狀，會與「" + Name(m) + "」重疊。");
             }
 
             return new LayoutReport(errors, warnings);
@@ -80,6 +85,25 @@ namespace AutoDisplayMode.Core
             return sideBySide || stacked;
         }
 
+        /// <summary>
+        /// 模式中記錄、開啟，且與其他開啟的螢幕重疊的螢幕（與 <see cref="Check"/> 的重疊錯誤相同）。
+        /// 螢幕配置分頁用來在「未接上的螢幕」清單中標出造成重疊的螢幕（它們不在畫布上）。
+        /// </summary>
+        public static HashSet<MonitorId> Overlapping(ModeConfig mode)
+        {
+            List<MonitorSettings> on = mode.Monitors.Where(m => m.Enabled).ToList();
+            var result = new HashSet<MonitorId>();
+            for (int i = 0; i < on.Count; i++)
+                for (int j = i + 1; j < on.Count; j++)
+                    if (Overlaps(on[i], on[j]))
+                    {
+                        result.Add(on[i].Id);
+                        result.Add(on[j].Id);
+                    }
+            return result;
+        }
+
+        /// <summary>兩台螢幕在桌面上重疊（寬高依方向對調；不看是否開啟，由呼叫端篩選）。</summary>
         internal static bool Overlaps(MonitorSettings a, MonitorSettings b) =>
             a.X < b.X + b.DesktopWidth && b.X < a.X + a.DesktopWidth &&
             a.Y < b.Y + b.DesktopHeight && b.Y < a.Y + a.DesktopHeight;

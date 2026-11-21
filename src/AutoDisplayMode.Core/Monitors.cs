@@ -243,6 +243,17 @@ namespace AutoDisplayMode.Core
             return s != null ? s with { Name = d.Name } : ApplyPlanner.Unlisted(d, UnlistedMonitors) with { Primary = false };
         }
 
+        /// <summary>此模式記錄、但不在 <paramref name="connected"/>（目前接上的螢幕）中的螢幕設定（依記錄的順序）。</summary>
+        public List<MonitorSettings> Disconnected(IReadOnlyList<DetectedMonitor> connected) =>
+            Monitors.FindAll(m => !connected.Any(d => d.Id == m.Id));
+
+        /// <summary>接上但此模式沒有記錄的螢幕（「此模式未設定」，也是「對應到…」可選的螢幕）。</summary>
+        public List<DetectedMonitor> Unrecorded(IReadOnlyList<DetectedMonitor> connected) =>
+            connected.Where(d => !Records(d.Id)).ToList();
+
+        /// <summary>此模式有沒有這台螢幕的螢幕設定。</summary>
+        public bool Records(MonitorId id) => Monitors.Exists(m => m.Id == id);
+
         /// <summary>
         /// 以 <paramref name="s"/> 取代同一台螢幕的螢幕設定（沒有記錄時加入），再維持配置的規則：
         /// 主螢幕只有一台且是開啟的（設為主螢幕的取代原本的；沒有時由第一台開啟的螢幕擔任），
@@ -254,12 +265,45 @@ namespace AutoDisplayMode.Core
             if (index >= 0) Monitors[index] = s;
             else Monitors.Add(s);
 
+            // 設為主螢幕的取代原本的
+            if (s.Enabled && s.Primary)
+                for (int i = 0; i < Monitors.Count; i++)
+                    if (Monitors[i].Primary && Monitors[i].Id != s.Id) Monitors[i] = Monitors[i] with { Primary = false };
+            KeepPrimaryAtOrigin();
+        }
+
+        /// <summary>
+        /// 刪除一台螢幕的螢幕設定（例如已經淘汰、不會再接上的螢幕），再維持配置的規則（見 <see cref="UpdateMonitor"/>）：
+        /// 刪除的是主螢幕時，由第一台開啟的螢幕接任。
+        /// </summary>
+        public void RemoveMonitor(MonitorId id)
+        {
+            Monitors.RemoveAll(m => m.Id == id);
+            KeepPrimaryAtOrigin();
+        }
+
+        /// <summary>
+        /// 「對應到…」（ADR-0003）：把螢幕 <paramref name="from"/> 的螢幕設定改給接上的螢幕 <paramref name="to"/>
+        /// （換上同型號新螢幕時沿用舊設定）。設定內容與順序不變，只把識別與名稱換成新螢幕的，原記錄就此移除。
+        /// <paramref name="to"/> 必須是此模式沒有記錄的螢幕。
+        /// </summary>
+        public void MapMonitor(MonitorId from, DetectedMonitor to)
+        {
+            int index = Monitors.FindIndex(m => m.Id == from);
+            if (index < 0) throw new InvalidOperationException("此模式沒有記錄螢幕「" + from + "」。");
+            if (Records(to.Id)) throw new InvalidOperationException("此模式已經記錄了螢幕「" + to.Id + "」。");
+            Monitors[index] = Monitors[index] with { Id = to.Id, Name = to.Name };
+            KeepPrimaryAtOrigin();
+        }
+
+        /// <summary>
+        /// 主螢幕是開啟的那一台（沒有時由第一台開啟的螢幕擔任；其餘與關閉的螢幕都取消主螢幕），
+        /// 並平移開啟的螢幕讓它位於 (0,0)。關閉的螢幕座標不變。
+        /// </summary>
+        void KeepPrimaryAtOrigin()
+        {
             for (int i = 0; i < Monitors.Count; i++)
-            {
-                MonitorSettings m = Monitors[i];
-                bool primary = m.Enabled && m.Primary && (m.Id == s.Id || !(s.Enabled && s.Primary));
-                if (primary != m.Primary) Monitors[i] = m with { Primary = primary };
-            }
+                if (!Monitors[i].Enabled && Monitors[i].Primary) Monitors[i] = Monitors[i] with { Primary = false };
 
             int p = Monitors.FindIndex(m => m.Enabled && m.Primary);
             if (p < 0) p = Monitors.FindIndex(m => m.Enabled);

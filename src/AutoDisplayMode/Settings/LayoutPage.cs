@@ -10,6 +10,7 @@ namespace AutoDisplayMode.Settings
 {
     /// <summary>
     /// 「螢幕配置」分頁：選擇模式，在畫布上擺放目前接上的螢幕，並編輯選取螢幕的開關、主螢幕、座標、解析度、更新率與方向。
+    /// 此模式未設定的接上螢幕在畫布上標示；此模式記錄但沒接上的螢幕列在畫布下方的清單中，可刪除或「對應到…」新螢幕（ADR-0003）。
     /// 重疊時無法套用、有空隙時警告；「預覽套用」經協調者立即套用，15 秒內未保留就還原。插拔螢幕時重新偵測。
     /// </summary>
     sealed class LayoutPage : SettingsPage
@@ -28,12 +29,20 @@ namespace AutoDisplayMode.Settings
         readonly ComboBox refresh;
         readonly ComboBox orientation;
         readonly TableLayoutPanel fields;
+        readonly Label unrecordedNote;
+        readonly TableLayoutPanel disconnectedSection;
+        readonly FlowLayoutPanel disconnectedButtons;
+        readonly ListBox disconnectedList;
+        readonly Button removeButton;
+        readonly Button mapButton;
+        readonly ContextMenuStrip mapMenu = new();
         readonly Label detectError;
         readonly Label errors;
         readonly Label warnings;
         readonly Button previewButton;
         AppConfig draft = new();
         IReadOnlyList<DetectedMonitor> detected = Array.Empty<DetectedMonitor>();
+        bool detectOk;           // 最近一次偵測成功：失敗時 detected 是空的，不能據此判斷哪些螢幕沒接上
         bool showing;            // 正在把資料顯示到欄位上：欄位改變不寫回副本
         bool redetectAfterDrag;  // 拖拉中插拔了螢幕：放開後再重新偵測
         bool previewing;         // 已按「預覽套用」，等待協調者套用完成
@@ -48,6 +57,12 @@ namespace AutoDisplayMode.Settings
         sealed record Rate(int Hz)
         {
             public override string ToString() => Hz + " Hz";
+        }
+
+        /// <summary>「未接上的螢幕」清單的項目。</summary>
+        sealed record DisconnectedItem(MonitorSettings Settings, string Text)
+        {
+            public override string ToString() => Text;
         }
 
         public LayoutPage(AppCoordinator app) : base("螢幕配置")
@@ -126,10 +141,61 @@ namespace AutoDisplayMode.Settings
             Row("解析度：", resolution);
             Row("更新率：", refresh);
             Row("方向：", orientation);
+            unrecordedNote = Hint("此模式未設定這台螢幕，套用時依「未記錄的螢幕」維持現狀或關閉；修改設定後就會加入此模式。");
+            unrecordedNote.ForeColor = Color.DarkOrange;
+            unrecordedNote.Margin = new Padding(3, 6, 3, 6);
+            Wide(unrecordedNote);
             Wide(Hint("座標以主螢幕左上角為 (0,0)。拖拉時靠近其他螢幕的邊會自動貼齊（按住 Alt 不貼齊）。"));
 
             var details = new Panel { Dock = DockStyle.Fill, AutoScroll = true, Margin = new Padding(0) };
             details.Controls.Add(fields);
+
+            // ---- 畫布下方：未接上的螢幕（沒有時整列隱藏，不佔畫布的高度） ----
+            // 固定高度（約三列）：Dock = Fill 時表格會用清單偏好的高度，把畫布擠小
+            disconnectedList = new ListBox
+            {
+                Anchor = AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Top,
+                Height = 50,
+                IntegralHeight = true,
+                HorizontalScrollbar = true,
+                Margin = new Padding(3, 0, 3, 0),
+            };
+            disconnectedList.SelectedIndexChanged += delegate { ShowDisconnectedButtons(); };
+            removeButton = new Button { Text = "刪除", AutoSize = true, Margin = new Padding(0, 0, 0, 6) };
+            removeButton.Click += delegate
+            {
+                if (disconnectedList.SelectedItem is DisconnectedItem item) Edit(m => m.RemoveMonitor(item.Settings.Id));
+            };
+            mapButton = new Button { Text = "對應到…", AutoSize = true, Margin = new Padding(0) };
+            mapButton.Click += delegate { ShowMapMenu(); };
+            disconnectedButtons = new FlowLayoutPanel
+            {
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                FlowDirection = FlowDirection.TopDown,
+                WrapContents = false,
+                Anchor = AnchorStyles.Left | AnchorStyles.Bottom,
+                Margin = new Padding(0),
+                Visible = false,
+            };
+            disconnectedButtons.Controls.Add(removeButton);
+            disconnectedButtons.Controls.Add(mapButton);
+
+            disconnectedSection = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                ColumnCount = 1,
+                Margin = new Padding(0, 6, 12, 0),
+                Visible = false,
+            };
+            disconnectedSection.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            disconnectedSection.Controls.Add(BoldLabel("未接上的螢幕", new Padding(3, 0, 3, 0)));
+            Label disconnectedHint = Hint("此模式記錄、但現在沒接上的螢幕。換上同型號的新螢幕時，選取舊螢幕再按「對應到…」選新螢幕，即可沿用舊設定。");
+            disconnectedHint.Margin = new Padding(3, 0, 3, 3);
+            disconnectedSection.Controls.Add(disconnectedHint);
+            disconnectedSection.Controls.Add(disconnectedList);
 
             // ---- 下方：驗證結果與預覽 ----
             detectError = Message(Color.Firebrick);
@@ -141,12 +207,12 @@ namespace AutoDisplayMode.Settings
             previewHint.Anchor = AnchorStyles.Left;
             previewHint.Margin = new Padding(3, 6, 3, 0);
 
-            var root = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 6 };
+            var root = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 7 };
             root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
             root.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 200));
             root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-            for (int i = 0; i < 4; i++) root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            for (int i = 0; i < 5; i++) root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             void Span(Control c, int row)
             {
                 root.Controls.Add(c, 0, row);
@@ -155,11 +221,13 @@ namespace AutoDisplayMode.Settings
             Span(top, 0);
             root.Controls.Add(canvas, 0, 1);
             root.Controls.Add(details, 1, 1);
-            Span(detectError, 2);
-            Span(errors, 3);
-            Span(warnings, 4);
-            root.Controls.Add(previewHint, 0, 5);
-            root.Controls.Add(previewButton, 1, 5);
+            root.Controls.Add(disconnectedSection, 0, 2);
+            root.Controls.Add(disconnectedButtons, 1, 2);
+            Span(detectError, 3);
+            Span(errors, 4);
+            Span(warnings, 5);
+            root.Controls.Add(previewHint, 0, 6);
+            root.Controls.Add(previewButton, 1, 6);
             Controls.Add(root);
 
             app.MonitorsChanged += OnMonitorsChanged;
@@ -209,6 +277,7 @@ namespace AutoDisplayMode.Settings
         void Detect()
         {
             detected = app.DetectMonitors(out string? error) ?? Array.Empty<DetectedMonitor>();
+            detectOk = error == null;
             detectError.Text = error ?? "";
             detectError.Visible = error != null;
         }
@@ -231,12 +300,71 @@ namespace AutoDisplayMode.Settings
             ModeConfig? mode = SelectedMode;
             List<LayoutCanvas.Item> items = mode == null
                 ? new List<LayoutCanvas.Item>()
-                : detected.Select(d => new LayoutCanvas.Item(d.Id, MonitorLabel(d), mode.SettingsFor(d))).ToList();
+                : detected.Select(d => new LayoutCanvas.Item(d.Id, MonitorLabel(d), mode.SettingsFor(d), !mode.Records(d.Id))).ToList();
             canvas.SetItems(items);
             if (!items.Exists(i => i.Id == canvas.Selected))
                 canvas.Selected = (items.Find(i => i.Shown.Enabled && i.Shown.Primary) ?? items.FirstOrDefault())?.Id;
             ShowSelected();
+            ShowDisconnected();
             ShowIssues();
+        }
+
+        /// <summary>
+        /// 「未接上的螢幕」清單：此模式記錄、但現在沒接上的螢幕（沒有就整段隱藏）。
+        /// 與其他螢幕重疊的標出【重疊】，因為它們不在畫布上，重疊錯誤要在這裡刪除或對應才能解決。
+        /// 偵測失敗時不列出（否則每一台都會被當成沒接上，可能誤刪）。
+        /// </summary>
+        void ShowDisconnected()
+        {
+            ModeConfig? mode = SelectedMode;
+            List<MonitorSettings> list = mode != null && detectOk ? mode.Disconnected(detected) : new List<MonitorSettings>();
+            HashSet<MonitorId> overlapping = mode != null ? MonitorLayout.Overlapping(mode) : new HashSet<MonitorId>();
+            MonitorId? keep = (disconnectedList.SelectedItem as DisconnectedItem)?.Settings.Id;
+            disconnectedList.BeginUpdate();
+            disconnectedList.Items.Clear();
+            foreach (MonitorSettings s in list)
+            {
+                string text = (overlapping.Contains(s.Id) ? "【重疊】" : "") + WithIdDetail(MonitorLayout.Label(s), s.Id) + (s.Enabled ? "" : "（關閉）");
+                disconnectedList.Items.Add(new DisconnectedItem(s, text));
+            }
+            int index = list.FindIndex(s => s.Id == keep);
+            disconnectedList.SelectedIndex = index >= 0 ? index : (list.Count > 0 ? 0 : -1);
+            disconnectedList.EndUpdate();
+            disconnectedSection.Visible = disconnectedButtons.Visible = list.Count > 0;
+            ShowDisconnectedButtons();
+        }
+
+        void ShowDisconnectedButtons()
+        {
+            bool selected = disconnectedList.SelectedItem is DisconnectedItem;
+            removeButton.Enabled = selected;
+            mapButton.Enabled = selected && SelectedMode is ModeConfig m && m.Unrecorded(detected).Count > 0;
+        }
+
+        /// <summary>
+        /// 名稱加上螢幕識別中區分同型號螢幕的部分（序號或接孔）：換上同型號新螢幕時名稱相同，要靠它分辨。
+        /// </summary>
+        static string WithIdDetail(string name, MonitorId id) =>
+            name + "（" + (id.Serial != null ? "序號 " + id.Serial : "接孔 " + id.Connector) + "）";
+
+        /// <summary>「對應到…」：列出接上但此模式未設定的螢幕，選了就把選取的舊螢幕設定改給它。</summary>
+        void ShowMapMenu()
+        {
+            if (disconnectedList.SelectedItem is not DisconnectedItem item || SelectedMode is not ModeConfig mode) return;
+            foreach (ToolStripItem old in mapMenu.Items.Cast<ToolStripItem>().ToList()) old.Dispose();
+            mapMenu.Font = Font;
+            foreach (DetectedMonitor d in mode.Unrecorded(detected))
+            {
+                DetectedMonitor target = d;
+                mapMenu.Items.Add(WithIdDetail(MonitorLabel(d), d.Id), null, delegate
+                {
+                    // 選單開著時可能插拔螢幕或換了模式：舊記錄與新螢幕都要仍然有效
+                    if (SelectedMode != mode || !mode.Records(item.Settings.Id) || !mode.Unrecorded(detected).Exists(u => u.Id == target.Id)) return;
+                    canvas.Selected = target.Id;
+                    Edit(m => m.MapMonitor(item.Settings.Id, target));
+                });
+            }
+            mapMenu.Show(mapButton, new Point(0, mapButton.Height));
         }
 
         /// <summary>畫布與欄位上螢幕的名稱：同名的螢幕（例如兩台同型號）加上接孔區分。</summary>
@@ -254,6 +382,7 @@ namespace AutoDisplayMode.Settings
             try
             {
                 fields.Enabled = s != null;
+                unrecordedNote.Visible = d != null && SelectedMode is ModeConfig mode && !mode.Records(d.Id);
                 if (d == null || s == null)
                 {
                     monitorName.Text = detected.Count == 0 ? "（沒有偵測到螢幕）" : "（請在左邊選取螢幕）";
@@ -288,7 +417,8 @@ namespace AutoDisplayMode.Settings
 
         void ShowIssues()
         {
-            LayoutReport report = SelectedMode is ModeConfig m ? MonitorLayout.Check(m, detected) : new LayoutReport(Array.Empty<string>(), Array.Empty<string>());
+            // 偵測失敗時不傳接上的螢幕：否則每一台都會被標成「（未接上）」
+            LayoutReport report = SelectedMode is ModeConfig m ? MonitorLayout.Check(m, detectOk ? detected : null) : new LayoutReport(Array.Empty<string>(), Array.Empty<string>());
             errors.Text = string.Concat(report.Errors.Select(e => "無法套用：" + e + "。\n")).TrimEnd('\n');
             errors.Visible = report.Errors.Count > 0;
             warnings.Text = string.Join("\n", report.Warnings);
@@ -406,6 +536,7 @@ namespace AutoDisplayMode.Settings
                 app.MonitorsChanged -= OnMonitorsChanged;
                 app.PreviewApplied -= OnPreviewApplied;
                 app.Changed -= OnAppChanged;
+                mapMenu.Dispose();
             }
             base.Dispose(disposing);
         }

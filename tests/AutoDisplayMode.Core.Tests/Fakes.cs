@@ -118,6 +118,11 @@ namespace AutoDisplayMode.Core.Tests
             Applied.Add(states);
             AppliedTargets.Add(TargetName?.Invoke());
         }
+
+        public event Action? Changed;
+
+        /// <summary>模擬插拔螢幕或 Windows 顯示設定改變。</summary>
+        public void RaiseChanged() => Changed?.Invoke();
     }
 
     /// <summary>建立假螢幕的捷徑。</summary>

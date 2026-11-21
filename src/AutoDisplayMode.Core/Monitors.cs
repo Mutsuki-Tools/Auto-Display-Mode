@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace AutoDisplayMode.Core
 {
@@ -156,6 +157,15 @@ namespace AutoDisplayMode.Core
 
         /// <summary>主螢幕。</summary>
         public bool Primary { get; init; }
+
+        /// <summary>直向（含翻轉）：桌面上的寬高是解析度對調。</summary>
+        public bool IsPortrait => Orientation is Orientation.Portrait or Orientation.PortraitFlipped;
+
+        /// <summary>在桌面上佔的寬度（依方向對調）。</summary>
+        public int DesktopWidth => IsPortrait ? Height : Width;
+
+        /// <summary>在桌面上佔的高度（依方向對調）。</summary>
+        public int DesktopHeight => IsPortrait ? Width : Height;
     }
 
     /// <summary>套用模式時，接上但模式中沒有記錄的螢幕要怎麼處理。</summary>
@@ -221,6 +231,61 @@ namespace AutoDisplayMode.Core
 
         /// <summary>每台螢幕的螢幕設定（依 cfg 中的順序）。</summary>
         public List<MonitorSettings> Monitors { get; } = new();
+
+        /// <summary>
+        /// 螢幕配置分頁顯示的螢幕設定：此模式記錄的（名稱換成偵測到的名稱）；
+        /// 沒有記錄時為套用此模式時它會有的狀態（依「未記錄的螢幕」維持現狀或關閉；維持現狀的螢幕不搶主螢幕）。
+        /// </summary>
+        public MonitorSettings SettingsFor(DetectedMonitor d)
+        {
+            MonitorSettings? s = Monitors.Find(m => m.Id == d.Id);
+            return s != null ? s with { Name = d.Name } : ApplyPlanner.Unlisted(d, UnlistedMonitors) with { Primary = false };
+        }
+
+        /// <summary>
+        /// 以 <paramref name="s"/> 取代同一台螢幕的螢幕設定（沒有記錄時加入），再維持配置的規則：
+        /// 主螢幕只有一台且是開啟的（設為主螢幕的取代原本的；沒有時由第一台開啟的螢幕擔任），
+        /// 並平移開啟的螢幕讓主螢幕位於 (0,0)（所以移動主螢幕等於反向移動其他螢幕）。關閉的螢幕座標不變。
+        /// </summary>
+        public void UpdateMonitor(MonitorSettings s)
+        {
+            int index = Monitors.FindIndex(m => m.Id == s.Id);
+            if (index >= 0) Monitors[index] = s;
+            else Monitors.Add(s);
+
+            for (int i = 0; i < Monitors.Count; i++)
+            {
+                MonitorSettings m = Monitors[i];
+                bool primary = m.Enabled && m.Primary && (m.Id == s.Id || !(s.Enabled && s.Primary));
+                if (primary != m.Primary) Monitors[i] = m with { Primary = primary };
+            }
+
+            int p = Monitors.FindIndex(m => m.Enabled && m.Primary);
+            if (p < 0) p = Monitors.FindIndex(m => m.Enabled);
+            if (p < 0) return;
+            int dx = Monitors[p].X, dy = Monitors[p].Y;
+            for (int i = 0; i < Monitors.Count; i++)
+            {
+                MonitorSettings m = Monitors[i];
+                if (m.Enabled) Monitors[i] = m with { X = m.X - dx, Y = m.Y - dy, Primary = i == p };
+            }
+        }
+
+        /// <summary>
+        /// 開啟或關閉一台螢幕（<paramref name="shown"/> 是目前顯示的螢幕設定，見 <see cref="SettingsFor"/>）。
+        /// 開啟原本關閉的螢幕時，若會與其他開啟的螢幕重疊，就移到最右邊（與主螢幕上緣對齊）。
+        /// </summary>
+        public void SetEnabled(MonitorSettings shown, bool on)
+        {
+            MonitorSettings s = shown with { Enabled = on };
+            if (on && !shown.Enabled)
+            {
+                List<MonitorSettings> others = Monitors.FindAll(m => m.Enabled && m.Id != s.Id);
+                if (others.Exists(m => MonitorLayout.Overlaps(m, s)))
+                    s = s with { X = others.Max(m => m.X + m.DesktopWidth), Y = 0 };
+            }
+            UpdateMonitor(s);
+        }
 
         /// <summary>深複製，保留 ID（螢幕設定是不可變的 record，複製清單即可）。</summary>
         public ModeConfig Clone() => CopyAs(Id, Name);

@@ -42,9 +42,8 @@ namespace AutoDisplayMode.Settings
             AcceptButton = ok;
             CancelButton = cancel;
 
-            // 票 08 在這裡加入螢幕配置分頁（順序：模式、螢幕配置、切換條件、一般設定）
             modesPage = new ModesPage(app);
-            pages = new SettingsPage[] { modesPage, new SwitchConditionsPage(app), new GeneralPage() };
+            pages = new SettingsPage[] { modesPage, new LayoutPage(app), new SwitchConditionsPage(app), new GeneralPage() };
 
             var tabs = new TabControl { Dock = DockStyle.Fill };
             foreach (SettingsPage page in pages)

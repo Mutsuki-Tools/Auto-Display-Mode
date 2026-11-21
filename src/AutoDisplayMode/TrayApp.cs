@@ -21,6 +21,7 @@ namespace AutoDisplayMode
 
         readonly AppCoordinator app;
         readonly WindowsUsageSignals signals;
+        readonly WindowsMonitorSystem monitors;
         readonly NotifyIcon tray;
         readonly ContextMenuStrip menu;
         readonly ToolStripMenuItem miStatus;
@@ -45,7 +46,7 @@ namespace AutoDisplayMode
             // ---- 核心與 Windows 轉接層 ----
             var clock = new StopwatchClock();
             signals = new WindowsUsageSignals(clock);
-            var monitors = new WindowsMonitorSystem(ui);
+            monitors = new WindowsMonitorSystem(ui);
             string dir = Path.GetDirectoryName(Application.ExecutablePath)!;
             app = new AppCoordinator(
                 new FileConfigStore(Path.Combine(dir, "AutoDisplayMode.cfg")),
@@ -229,6 +230,12 @@ namespace AutoDisplayMode
                 "・手動切換進入模式時，自動切換依模式的設定維持、開啟或關閉。\n" +
                 "・在設定視窗的「模式」分頁新增、刪除、重新命名、複製模式，並設定圖示顏色、手動切換進入時的自動切換與未記錄的螢幕。\n" +
                 "・刪除模式時，來源模式或目標模式是它的切換條件會一併刪除；最後一個模式與目前模式不能刪除。\n\n" +
+                "【螢幕配置】\n" +
+                "・在設定視窗的「螢幕配置」分頁選擇模式，畫布顯示目前接上的螢幕（此模式中關閉的以灰色排在下方），插拔螢幕時即時更新。\n" +
+                "・拖拉螢幕擺放位置，靠近其他螢幕的邊會自動貼齊（按住 Alt 不貼齊）；也可輸入座標，以主螢幕左上角為 (0,0)。\n" +
+                "・選取螢幕後設定開關、主螢幕、方向，以及該螢幕支援的解析度與更新率。\n" +
+                "・螢幕重疊時無法套用；螢幕之間有空隙時顯示警告（游標無法跨越空隙），仍可套用。\n" +
+                "・「預覽套用」立即套用編輯中的螢幕設定，15 秒內沒有按「保留變更」就還原；預覽不改變目前模式，保留後仍要按「套用」或「確定」才會存檔。\n\n" +
                 "【自動切換】目前：" + OnOff(cfg.AutoSwitch) + "（可從右鍵選單開關）\n" +
                 "・只檢查來源模式等於目前模式的切換條件，由上往下第一條成立的就切換。\n" +
                 "・閒置：所選的使用來源全部都沒有使用，持續指定的分鐘或小時。\n" +
@@ -267,6 +274,7 @@ namespace AutoDisplayMode
             settings?.Close();   // 放棄設定視窗中未套用的修改
             timer.Stop();
             signals.Dispose();
+            monitors.Dispose();
             tray.Visible = false;
             tray.Dispose();
             ExitThread();

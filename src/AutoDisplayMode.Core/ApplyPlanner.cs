@@ -55,7 +55,8 @@ namespace AutoDisplayMode.Core
             return new ApplyPlan(states, null);
         }
 
-        static MonitorSettings Unlisted(DetectedMonitor d, UnlistedMonitors policy)
+        /// <summary>接上但模式沒有記錄的螢幕，套用時的狀態。</summary>
+        internal static MonitorSettings Unlisted(DetectedMonitor d, UnlistedMonitors policy)
         {
             VideoMode mode = d.Current ?? d.Native ?? new VideoMode(0, 0, 0);
             bool on = d.IsActive && policy == UnlistedMonitors.Keep;

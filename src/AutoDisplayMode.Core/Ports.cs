@@ -22,6 +22,12 @@ namespace AutoDisplayMode.Core
         /// 結束後轉接層須在 UI 執行緒呼叫 <see cref="AppCoordinator.OnSwitchFinished"/>。
         /// </summary>
         void BeginApply(IReadOnlyList<MonitorSettings> states);
+
+        /// <summary>
+        /// 接上的螢幕或它們的狀態可能改變（插拔螢幕、Windows 顯示設定改變，包括程式自己套用螢幕設定時）。
+        /// 在 UI 執行緒觸發；短時間內的多次變化可合併成一次。
+        /// </summary>
+        event System.Action? Changed;
     }
 
     /// <summary>

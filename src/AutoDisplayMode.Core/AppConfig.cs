@@ -160,6 +160,11 @@ namespace AutoDisplayMode.Core
                 if (ValidateModeName(m.Id, m.Name) is string name) return name + "。";
             }
             if (FindMode(currentModeId) == null) return CurrentModeText + "。";
+            foreach (ModeConfig m in Modes)
+            {
+                if (MonitorLayout.Check(m).Errors.FirstOrDefault() is string layout)
+                    return "「" + m.Name.Trim() + "」的螢幕配置有誤：" + layout + "。";
+            }
             return InvalidSwitchConditions().FirstOrDefault();
         }
 

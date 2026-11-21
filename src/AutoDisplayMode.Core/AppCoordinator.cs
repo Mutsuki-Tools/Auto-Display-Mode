@@ -45,10 +45,25 @@ namespace AutoDisplayMode.Core
         bool captureStale = true; // 設定視窗最後一次擷取之後又切換過螢幕（或還沒擷取過）：擷取的模式不再代表目前的螢幕狀態
         string loadNote = ""; // 載入 cfg 時發生的事（轉移、備份失敗等），附加在下一則通知中
 
-        /// <summary>進行中的切換：目標模式、是否為手動切換、自動切換成功時要跳出的通知。</summary>
-        sealed record PendingSwitch(int ModeId, string ModeName, bool Manual, string? NotifyText);
+        /// <summary>套用螢幕狀態的原因。</summary>
+        enum SwitchKind
+        {
+            /// <summary>依切換條件自動切換。</summary>
+            Auto,
+            /// <summary>手動切換。</summary>
+            Manual,
+            /// <summary>螢幕配置分頁的預覽套用（不改變目前模式）。</summary>
+            Preview,
+            /// <summary>還原為預覽前的螢幕狀態。</summary>
+            Revert,
+        }
+
+        /// <summary>進行中的切換：原因、目標模式（預覽與還原時為 0）、顯示的名稱、自動切換成功時要跳出的通知。</summary>
+        sealed record PendingSwitch(SwitchKind Kind, int ModeId, string ModeName, string? NotifyText);
 
         PendingSwitch? pending;   // 未切換時為 null
+        IReadOnlyList<MonitorSettings>? previewBefore;   // 預覽前的螢幕狀態；沒有預覽（或已保留、作廢）時為 null
+        bool previewApplied;      // 預覽已套用，等待使用者保留或還原
 
         public AppCoordinator(IConfigStore store, IMonitorSystem monitors, IUsageSignals signals,
             IClock clock, IStartupRegistration startup, INotifier notifier)
@@ -61,10 +76,23 @@ namespace AutoDisplayMode.Core
             this.notifier = notifier;
 
             config = LoadConfig();
+            monitors.Changed += OnMonitorsChanged;
         }
 
         /// <summary>狀態改變（介面需要更新）時觸發。</summary>
         public event Action? Changed;
+
+        /// <summary>
+        /// 接上的螢幕或它們的狀態可能改變（設定視窗據此重新偵測）。切換中不觸發（偵測到的可能是過渡狀態），
+        /// 改在切換結束時觸發一次。
+        /// </summary>
+        public event Action? MonitorsChanged;
+
+        void OnMonitorsChanged()
+        {
+            if (IsSwitching) return;   // 切換結束時一定會觸發
+            else MonitorsChanged?.Invoke();
+        }
 
         /// <summary>螢幕切換執行中。</summary>
         public bool IsSwitching => pending != null;
@@ -151,7 +179,7 @@ namespace AutoDisplayMode.Core
                 string text = s.Kind == SwitchConditionKind.Idle
                     ? s.DescribeCondition() + "，已自動切換到「" + target.Name + "」。"
                     : "偵測到使用，已自動切換到「" + target.Name + "」。";
-                SwitchTo(target, manual: false, text);
+                SwitchTo(target, SwitchKind.Auto, text);
                 return;
             }
         }
@@ -193,17 +221,15 @@ namespace AutoDisplayMode.Core
                 return;
             }
             ModeConfig? mode = config.FindMode(modeId);
-            if (mode != null) SwitchTo(mode, manual: true, null);
+            if (mode != null) SwitchTo(mode, SwitchKind.Manual, null);
         }
 
         /// <summary>
         /// 依目前接上的螢幕規劃並開始套用 <paramref name="target"/>。偵測失敗或規劃被拒絕時不切換、
         /// 通知並暫停自動切換。目前模式在套用成功（<see cref="OnSwitchFinished"/>）後才改變。
         /// </summary>
-        void SwitchTo(ModeConfig target, bool manual, string? autoNotifyText)
+        void SwitchTo(ModeConfig target, SwitchKind kind, string? autoNotifyText)
         {
-            long now = clock.NowMs;
-
             IReadOnlyList<DetectedMonitor> detected;
             try
             {
@@ -222,14 +248,22 @@ namespace AutoDisplayMode.Core
                 return;
             }
 
-            pending = new PendingSwitch(target.Id, target.Name, manual, autoNotifyText);
+            // 等待確認的預覽作廢：螢幕已改成這次切換的模式，不應再還原
+            previewApplied = false;
+            previewBefore = null;
+            Begin(new PendingSwitch(kind, target.Id, target.Name, autoNotifyText), plan.States);
+        }
 
+        /// <summary>開始在背景套用 <paramref name="states"/>；結束時轉接層呼叫 <see cref="OnSwitchFinished"/>。</summary>
+        void Begin(PendingSwitch switching, IReadOnlyList<MonitorSettings> states)
+        {
+            pending = switching;
             ResetShortTermTracking();
-            ignoreUntilMs = now + SwitchingGraceMs;
+            ignoreUntilMs = clock.NowMs + SwitchingGraceMs;
             ApplyHookPolicy();
             OnChanged();
 
-            monitors.BeginApply(plan.States);
+            monitors.BeginApply(states);
         }
 
         /// <summary>
@@ -247,8 +281,10 @@ namespace AutoDisplayMode.Core
 
         /// <summary>
         /// 轉接層在套用結束時呼叫；<paramref name="error"/> 為 null 表示成功。
-        /// 成功：目前模式改為目標模式（手動切換時依目標模式的設定調整自動切換）並存檔。
+        /// 成功：目前模式改為目標模式（手動切換時依目標模式的設定調整自動切換）並存檔；
+        /// 預覽成功時等待使用者保留或還原（觸發 <see cref="PreviewApplied"/>），預覽與還原都不改變目前模式。
         /// 失敗：維持原本的模式、跳出錯誤通知、自動切換暫停 1 分鐘。
+        /// 結束後觸發 <see cref="MonitorsChanged"/>（螢幕狀態已改變）。
         /// </summary>
         public void OnSwitchFinished(string? error)
         {
@@ -259,11 +295,14 @@ namespace AutoDisplayMode.Core
 
             if (error == null)
             {
-                ModeConfig? target = config.FindMode(done.ModeId);   // 切換期間重新載入 cfg 可能刪掉了這個模式
+                if (done.Kind == SwitchKind.Preview) previewApplied = true;
+                ModeConfig? target = done.Kind is SwitchKind.Auto or SwitchKind.Manual
+                    ? config.FindMode(done.ModeId)   // 切換期間重新載入 cfg 可能刪掉了這個模式
+                    : null;
                 if (target != null)
                 {
                     config.CurrentModeId = target.Id;
-                    if (done.Manual && target.ManualAutoSwitch != ManualAutoSwitch.Keep)
+                    if (done.Kind == SwitchKind.Manual && target.ManualAutoSwitch != ManualAutoSwitch.Keep)
                         config.AutoSwitch = target.ManualAutoSwitch == ManualAutoSwitch.On;
                     Save();
                 }
@@ -276,12 +315,94 @@ namespace AutoDisplayMode.Core
                 // 閒置計時不歸零：暫停結束後條件仍成立就再試一次
                 ignoreUntilMs = now + FailurePauseMs;
                 ResetShortTermTracking();
-                notifier.Notify("無法切換到「" + done.ModeName + "」，維持原本的模式：\n" + error, NotificationKind.Error);
+                if (done.Kind == SwitchKind.Preview) previewBefore = null;   // 轉接層已盡量還原為套用前的狀態
+                notifier.Notify(done.Kind switch
+                {
+                    SwitchKind.Preview => "無法預覽螢幕配置：\n" + error,
+                    SwitchKind.Revert => "無法還原為預覽前的螢幕狀態：\n" + error,
+                    _ => "無法切換到「" + done.ModeName + "」，維持原本的模式：\n" + error,
+                }, NotificationKind.Error);
             }
 
             signals.RequestAudioRefresh();
             ApplyHookPolicy();
             OnChanged();
+            MonitorsChanged?.Invoke();
+            if (done.Kind == SwitchKind.Preview && previewApplied) PreviewApplied?.Invoke();
+        }
+
+        // ------------------------------------------------------------
+        //  預覽套用（螢幕配置分頁）
+        // ------------------------------------------------------------
+
+        /// <summary>預覽已套用，等待使用者保留（<see cref="KeepPreview"/>）或還原（<see cref="RevertPreview"/>）。</summary>
+        public bool PreviewAwaitingConfirm => previewApplied;
+
+        /// <summary>預覽套用成功、開始等待使用者保留或還原時觸發。</summary>
+        public event Action? PreviewApplied;
+
+        /// <summary>
+        /// 立即套用編輯中的模式 <paramref name="mode"/>（設定視窗副本中的模式），不改變目前模式也不存檔；
+        /// 先記下目前的螢幕狀態供 <see cref="RevertPreview"/> 還原。開始套用時回傳 null，無法預覽時回傳原因。
+        /// </summary>
+        public string? PreviewLayout(ModeConfig mode)
+        {
+            if (IsSwitching) return "正在切換中，請稍候再預覽。";
+            if (MonitorLayout.Check(mode).Errors.FirstOrDefault() is string invalid) return "螢幕配置有誤：" + invalid + "。";
+
+            if (DetectMonitors(out string? detectError) is not IReadOnlyList<DetectedMonitor> detected) return detectError;
+
+            ApplyPlan plan = ApplyPlanner.Plan(mode, detected);
+            if (plan.States == null) return "預覽後沒有任何螢幕會開著，已取消預覽。";
+
+            if (!previewApplied) previewBefore = CurrentStates(detected);   // 連續預覽時還原到第一次預覽前的狀態
+            previewApplied = false;
+            Begin(new PendingSwitch(SwitchKind.Preview, 0, "預覽的螢幕配置", null), plan.States);
+            return null;
+        }
+
+        /// <summary>保留預覽套用的螢幕狀態（不存檔；按「套用」或「確定」才存入模式）。</summary>
+        public void KeepPreview()
+        {
+            if (!previewApplied) return;
+            previewApplied = false;
+            previewBefore = null;
+            OnChanged();
+        }
+
+        /// <summary>還原為預覽前的螢幕狀態。預覽已保留或已作廢（例如之後從工作列手動切換過）時不動作。</summary>
+        public void RevertPreview()
+        {
+            if (!previewApplied || previewBefore is not IReadOnlyList<MonitorSettings> before) return;
+            previewApplied = false;
+            previewBefore = null;
+            Begin(new PendingSwitch(SwitchKind.Revert, 0, "預覽前的螢幕狀態", null), before);
+        }
+
+        /// <summary>
+        /// 螢幕配置分頁顯示用：偵測目前接上的螢幕。失敗時回傳 null，原因放在 <paramref name="error"/>
+        /// （不跳通知：插拔時會再偵測一次）。
+        /// </summary>
+        public IReadOnlyList<DetectedMonitor>? DetectMonitors(out string? error)
+        {
+            try
+            {
+                error = null;
+                return monitors.Detect();
+            }
+            catch (Exception ex)
+            {
+                error = "無法偵測螢幕：" + ex.Message;
+                return null;
+            }
+        }
+
+        /// <summary>目前實際的螢幕狀態（每台接上的螢幕一筆，主螢幕只有一台且位於 (0,0)）。</summary>
+        static IReadOnlyList<MonitorSettings> CurrentStates(IReadOnlyList<DetectedMonitor> detected)
+        {
+            var now = new ModeConfig(0, "");
+            now.Monitors.AddRange(Capture.Run(detected, Array.Empty<MonitorSettings>()));
+            return ApplyPlanner.Plan(now, detected).States ?? now.Monitors;
         }
 
         public void SetAutoSwitch(bool on)

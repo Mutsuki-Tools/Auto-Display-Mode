@@ -16,14 +16,65 @@ namespace AutoDisplayMode.Windows
     /// 並從登錄檔讀取 EDID 取得廠牌、型號與序號（ADR-0003）。
     /// 套用時先以 SetDisplayConfig 開關螢幕，再以 ChangeDisplaySettingsEx 設定解析度、更新率、方向、座標與主螢幕。
     /// </summary>
-    sealed class WindowsMonitorSystem : IMonitorSystem
+    sealed class WindowsMonitorSystem : IMonitorSystem, IDisposable
     {
         readonly SynchronizationContext ui;
+        readonly ChangeWatcher watcher;
 
-        public WindowsMonitorSystem(SynchronizationContext ui) => this.ui = ui;
+        /// <summary>必須在 UI 執行緒建立（插拔通知的隱藏視窗屬於建立它的執行緒）。</summary>
+        public WindowsMonitorSystem(SynchronizationContext ui)
+        {
+            this.ui = ui;
+            watcher = new ChangeWatcher(() => Changed?.Invoke());
+        }
 
         /// <summary>套用結束（在 UI 執行緒觸發）；參數為錯誤訊息，成功時為 null。</summary>
         public event Action<string?>? ApplyFinished;
+
+        public event Action? Changed;
+
+        public void Dispose() => watcher.Dispose();
+
+        /// <summary>
+        /// 監聽螢幕插拔與顯示設定改變：隱藏的頂層視窗（訊息專用視窗收不到廣播）接收
+        /// WM_DISPLAYCHANGE（桌面解析度或開啟的螢幕改變）與 WM_DEVICECHANGE 的 DBT_DEVNODES_CHANGED
+        /// （裝置增減，涵蓋插拔目前關閉中的螢幕）。後者任何裝置都會觸發，且一次插拔會連續收到好幾個，
+        /// 所以合併 0.5 秒內的變化成一次通知。
+        /// </summary>
+        sealed class ChangeWatcher : System.Windows.Forms.NativeWindow, IDisposable
+        {
+            const int WM_DISPLAYCHANGE = 0x007E;
+            const int WM_DEVICECHANGE = 0x0219;
+            const int DBT_DEVNODES_CHANGED = 0x0007;
+
+            readonly System.Windows.Forms.Timer debounce = new() { Interval = 500 };
+
+            public ChangeWatcher(Action changed)
+            {
+                debounce.Tick += delegate
+                {
+                    debounce.Stop();
+                    changed();
+                };
+                CreateHandle(new System.Windows.Forms.CreateParams());
+            }
+
+            protected override void WndProc(ref System.Windows.Forms.Message m)
+            {
+                if (m.Msg == WM_DISPLAYCHANGE || (m.Msg == WM_DEVICECHANGE && m.WParam.ToInt64() == DBT_DEVNODES_CHANGED))
+                {
+                    debounce.Stop();
+                    debounce.Start();
+                }
+                base.WndProc(ref m);
+            }
+
+            public void Dispose()
+            {
+                debounce.Dispose();
+                DestroyHandle();
+            }
+        }
 
         public IReadOnlyList<DetectedMonitor> Detect() => DetectTargets(Query(QDC_ALL_PATHS).Paths).Select(t => t.Monitor).ToList();
 

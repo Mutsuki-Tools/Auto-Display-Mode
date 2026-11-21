@@ -1,4 +1,6 @@
+using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace AutoDisplayMode.Core
 {
@@ -42,6 +44,79 @@ namespace AutoDisplayMode.Core
 
         public ModeConfig? FindMode(int id) => Modes.Find(m => m.Id == id);
 
+        /// <summary>新模式的 ID：目前最大的 ID + 1（沒有模式時為 1）。</summary>
+        public int NextModeId() => Modes.Count == 0 ? 1 : Modes.Max(m => m.Id) + 1;
+
+        /// <summary>新增一個沒有螢幕設定的模式（名稱不重複、配一個未使用的顏色），回傳新模式。</summary>
+        public ModeConfig AddMode(string baseName = "新模式")
+        {
+            var mode = new ModeConfig(NextModeId(), UniqueModeName(baseName));
+            Modes.Add(mode);
+            ModeConfig.AssignMissingColors(Modes);
+            return mode;
+        }
+
+        /// <summary>
+        /// 複製模式 <paramref name="modeId"/>：新的 ID、名稱與未使用的顏色，其餘設定與螢幕設定相同（清單各自獨立）。
+        /// 切換條件不複製。回傳新模式。
+        /// </summary>
+        public ModeConfig DuplicateMode(int modeId)
+        {
+            ModeConfig source = FindMode(modeId) ?? throw new ArgumentException("模式不存在", nameof(modeId));
+            ModeConfig copy = source.CopyAs(NextModeId(), UniqueModeName(source.Name.Trim() + " 的複本"));
+            copy.Color = ModeConfig.NoColor;
+            Modes.Add(copy);
+            ModeConfig.AssignMissingColors(Modes);
+            return copy;
+        }
+
+        /// <summary>不與現有模式重複的名稱：<paramref name="baseName"/>、「baseName 2」、「baseName 3」…</summary>
+        public string UniqueModeName(string baseName)
+        {
+            string name = baseName;
+            for (int n = 2; ValidateModeName(0, name) != null; n++) name = baseName + " " + n;
+            return name;
+        }
+
+        /// <summary>來源模式或目標模式是 <paramref name="modeId"/> 的切換條件（刪除該模式時會一併刪除）。</summary>
+        public List<SwitchCondition> ConditionsReferencing(int modeId) =>
+            SwitchConditions.FindAll(s => s.FromModeId == modeId || s.ToModeId == modeId);
+
+        /// <summary>
+        /// 模式 <paramref name="modeId"/> 是否可以刪除：最後一個模式與目前模式（<paramref name="currentModeId"/>）不可刪除。
+        /// 可以刪除時回傳 null，否則回傳原因。
+        /// </summary>
+        public string? ModeRemovalBlocker(int modeId, int currentModeId)
+        {
+            if (Modes.Count <= 1) return LastModeText;
+            if (modeId == currentModeId) return CurrentModeText;
+            return null;
+        }
+
+        /// <summary>
+        /// 檢查模式 <paramref name="modeId"/> 改名為 <paramref name="name"/> 是否有效：不可空白，也不可與其他模式重複
+        /// （去掉前後空白、不分大小寫比較）。有效時回傳 null，否則回傳原因。
+        /// </summary>
+        public string? ValidateModeName(int modeId, string name)
+        {
+            string trimmed = name.Trim();
+            if (trimmed.Length == 0) return "模式名稱不可空白";
+            ModeConfig? other = Modes.Find(m => m.Id != modeId && string.Equals(m.Name.Trim(), trimmed, StringComparison.OrdinalIgnoreCase));
+            return other == null ? null : "已經有名為「" + other.Name.Trim() + "」的模式";
+        }
+
+        const string LastModeText = "至少要保留一個模式";
+        const string CurrentModeText = "不能刪除目前模式";
+
+        /// <summary>刪除模式，並一併刪除來源模式或目標模式是它的切換條件；回傳被刪除的切換條件。</summary>
+        public List<SwitchCondition> RemoveMode(int modeId)
+        {
+            List<SwitchCondition> removed = ConditionsReferencing(modeId);
+            Modes.RemoveAll(m => m.Id == modeId);
+            SwitchConditions.RemoveAll(removed.Contains);
+            return removed;
+        }
+
         // ---- 切換條件 ----
 
         /// <summary>所有切換條件（依表格順序：同一來源模式的條件由上往下檢查，第一條成立的就執行）。</summary>
@@ -54,7 +129,12 @@ namespace AutoDisplayMode.Core
         public string? Validate(int currentModeId)
         {
             if (ValidateGeneral() is string general) return general + "。";
-            if (FindMode(currentModeId) == null) return "不能刪除目前模式。";
+            if (Modes.Count == 0) return LastModeText + "。";
+            foreach (ModeConfig m in Modes)
+            {
+                if (ValidateModeName(m.Id, m.Name) is string name) return name + "。";
+            }
+            if (FindMode(currentModeId) == null) return CurrentModeText + "。";
             for (int i = 0; i < SwitchConditions.Count; i++)
             {
                 if (SwitchConditions[i].Validate(this) is string reason)

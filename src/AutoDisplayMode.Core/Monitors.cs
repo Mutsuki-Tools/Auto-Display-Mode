@@ -222,10 +222,13 @@ namespace AutoDisplayMode.Core
         /// <summary>每台螢幕的螢幕設定（依 cfg 中的順序）。</summary>
         public List<MonitorSettings> Monitors { get; } = new();
 
-        /// <summary>深複製（螢幕設定是不可變的 record，複製清單即可）。</summary>
-        public ModeConfig Clone()
+        /// <summary>深複製，保留 ID（螢幕設定是不可變的 record，複製清單即可）。</summary>
+        public ModeConfig Clone() => CopyAs(Id, Name);
+
+        /// <summary>以新的 ID 與名稱深複製，其餘設定與螢幕設定相同（清單各自獨立）。</summary>
+        public ModeConfig CopyAs(int id, string name)
         {
-            var m = new ModeConfig(Id, Name) { Color = Color, ManualAutoSwitch = ManualAutoSwitch, UnlistedMonitors = UnlistedMonitors };
+            var m = new ModeConfig(id, name) { Color = Color, ManualAutoSwitch = ManualAutoSwitch, UnlistedMonitors = UnlistedMonitors };
             m.Monitors.AddRange(Monitors);
             return m;
         }

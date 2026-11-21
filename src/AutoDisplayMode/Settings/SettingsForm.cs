@@ -13,6 +13,7 @@ namespace AutoDisplayMode.Settings
     {
         readonly AppCoordinator app;
         readonly SettingsPage[] pages;
+        readonly ModesPage modesPage;   // 套用時提供在視窗中擷取的模式
         readonly Button applyButton;
         readonly AppConfig draft;
 
@@ -28,7 +29,7 @@ namespace AutoDisplayMode.Settings
             Icon = icon;
             StartPosition = FormStartPosition.CenterScreen;
             MaximizeBox = false;
-            ClientSize = new Size(600, 500);
+            ClientSize = new Size(640, 580);   // 模式分頁不需捲動
             MinimumSize = new Size(480, 360);
 
             var ok = DialogButton("確定");
@@ -41,8 +42,9 @@ namespace AutoDisplayMode.Settings
             AcceptButton = ok;
             CancelButton = cancel;
 
-            // 票 06～08 在這裡加入其他分頁
-            pages = new SettingsPage[] { new GeneralPage() };
+            // 票 07、08 在這裡加入其他分頁（順序：模式、螢幕配置、切換條件、一般設定）
+            modesPage = new ModesPage(app);
+            pages = new SettingsPage[] { modesPage, new GeneralPage() };
 
             var tabs = new TabControl { Dock = DockStyle.Fill };
             foreach (SettingsPage page in pages)
@@ -51,6 +53,8 @@ namespace AutoDisplayMode.Settings
                 page.Edited += delegate { applyButton.Enabled = true; };
                 tabs.TabPages.Add(page);
             }
+            // 切換分頁時重新顯示副本，反映其他分頁的修改（例如模式改名後，下拉選單顯示新名稱）
+            tabs.Selected += (_, e) => (e.TabPage as SettingsPage)?.Load(draft);
 
             var buttons = new FlowLayoutPanel
             {
@@ -77,13 +81,14 @@ namespace AutoDisplayMode.Settings
             foreach (SettingsPage page in pages) page.CommitEdits();
             if (!applyButton.Enabled) return true;
 
-            string? error = app.ApplySettings(draft);
+            string? error = app.ApplySettings(draft, modesPage.CapturedModeId);
             if (error != null)
             {
                 MessageBox.Show(this, "無法套用設定：\n" + error, Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return false;
             }
             applyButton.Enabled = false;
+            foreach (SettingsPage page in pages) page.OnApplied();
             return true;
         }
 

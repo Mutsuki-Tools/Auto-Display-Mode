@@ -42,6 +42,7 @@ namespace AutoDisplayMode.Core
         uint lastInputTick;      // 上次看到的 Windows 最後輸入時間
         bool settingsOpen;    // 設定視窗開著：暫停自動切換
         bool writesBlocked;   // cfg 讀取或舊版備份失敗：不寫入 cfg，避免覆蓋原本的內容
+        bool captureStale = true; // 設定視窗最後一次擷取之後又切換過螢幕（或還沒擷取過）：擷取的模式不再代表目前的螢幕狀態
         string loadNote = ""; // 載入 cfg 時發生的事（轉移、備份失敗等），附加在下一則通知中
 
         /// <summary>進行中的切換：目標模式、是否為手動切換、自動切換成功時要跳出的通知。</summary>
@@ -254,6 +255,7 @@ namespace AutoDisplayMode.Core
             if (pending is not PendingSwitch done) return;
             long now = clock.NowMs;
             pending = null;
+            captureStale = true;   // 失敗時螢幕也可能已部分改變
 
             if (error == null)
             {
@@ -328,16 +330,26 @@ namespace AutoDisplayMode.Core
         /// 套用設定視窗暫存的設定（<see cref="AppConfig.Clone"/> 出來修改的複本）：寫入 cfg 並立即生效。
         /// 成功時回傳 null；失敗時回傳原因，設定維持不變。
         /// </summary>
-        public string? ApplySettings(AppConfig edited)
+        /// <param name="capturedModeId">
+        /// 在設定視窗中最後一次擷取（<see cref="CaptureForSettings"/>）存入的模式；套用後它成為目前模式並重新計時。
+        /// 沒有擷取、該模式已從副本刪除，或擷取之後又切換過螢幕時，目前模式以協調者記錄的為準。
+        /// </param>
+        public string? ApplySettings(AppConfig edited, int? capturedModeId = null)
         {
-            if (edited.Validate(config.CurrentModeId) is string invalid) return invalid;
+            if (IsSwitching) return "正在切換中，請稍候再套用。";   // 切換完成時會改變目前模式
+
+            // 目前模式與自動切換以協調者記錄的為準：設定視窗開著時仍可從工作列手動切換、開關自動切換
+            bool captured = capturedModeId is int id && !captureStale && edited.FindMode(id) != null;
+            int current = captured ? capturedModeId!.Value : config.CurrentModeId;
+
+            if (edited.Validate(current) is string invalid) return invalid;
             if (writesBlocked)
                 return "讀取設定檔或備份舊版設定檔時失敗，為避免覆蓋原本的內容，未套用任何修改。\n" +
                        "請關閉設定視窗，修正設定檔後從工作列選「重新載入 cfg」。";
 
-            // 目前模式與自動切換以協調者記錄的為準：設定視窗開著時仍可從工作列手動切換、開關自動切換
             AppConfig next = edited.Clone();
-            next.CurrentModeId = config.CurrentModeId;
+            foreach (ModeConfig m in next.Modes) m.Name = m.Name.Trim();
+            next.CurrentModeId = current;
             next.AutoSwitch = config.AutoSwitch;
             if (!Save(next)) return "無法寫入設定檔：\n" + store.Location;
 
@@ -346,6 +358,12 @@ namespace AutoDisplayMode.Core
             if (startupChanged && SyncStartup() is string error)
                 notifier.Notify(error + "\n下次啟動程式時會再試一次。", NotificationKind.Error);
 
+            if (captured)
+            {
+                // 與從工作列擷取相同：存入的模式成為目前模式並重新計時
+                captureStale = true;
+                ResetUsageTracking(clock.NowMs);
+            }
             audioStreak = 0;   // 聲音音量門檻或持續秒數可能改變
             ApplyHookPolicy();
             OnChanged();
@@ -434,6 +452,34 @@ namespace AutoDisplayMode.Core
             if (Save()) notifier.Notify("已將目前螢幕狀態存入「" + mode.Name + "」。", NotificationKind.Info);
             else notifier.Notify("無法寫入設定檔：\n" + store.Location, NotificationKind.Error);
             OnChanged();
+        }
+
+        /// <summary>
+        /// 設定視窗中的擷取：依目前實際的螢幕狀態更新 <paramref name="existing"/>（模式原本的螢幕設定），
+        /// 回傳新的螢幕設定，不存檔也不改變目前模式（由設定視窗存進副本，套用時再傳入 <see cref="ApplySettings"/>）。
+        /// 切換中或偵測螢幕失敗時通知並回傳 null。
+        /// </summary>
+        public List<MonitorSettings>? CaptureForSettings(IReadOnlyList<MonitorSettings> existing)
+        {
+            if (IsSwitching)
+            {
+                notifier.Notify(BusyText, NotificationKind.Info);
+                return null;
+            }
+
+            IReadOnlyList<DetectedMonitor> detected;
+            try
+            {
+                detected = monitors.Detect();
+            }
+            catch (Exception ex)
+            {
+                notifier.Notify("無法偵測螢幕：" + ex.Message, NotificationKind.Error);
+                return null;
+            }
+
+            captureStale = false;
+            return Capture.Run(detected, existing);
         }
 
         // ------------------------------------------------------------
@@ -542,12 +588,11 @@ namespace AutoDisplayMode.Core
         /// <summary>以 <paramref name="detected"/> 擷取出「預設」模式，加入設定並設為目前模式。</summary>
         static ModeConfig AddDefaultMode(AppConfig c, IReadOnlyList<DetectedMonitor> detected)
         {
-            int id = c.Modes.Count == 0 ? 1 : c.Modes.Max(m => m.Id) + 1;
-            var mode = new ModeConfig(id, DefaultModeName);
+            var mode = new ModeConfig(c.NextModeId(), DefaultModeName);
             mode.Monitors.AddRange(Capture.Run(detected, Array.Empty<MonitorSettings>()));
             c.Modes.Add(mode);
             ModeConfig.AssignMissingColors(c.Modes);
-            c.CurrentModeId = id;
+            c.CurrentModeId = mode.Id;
             return mode;
         }
 

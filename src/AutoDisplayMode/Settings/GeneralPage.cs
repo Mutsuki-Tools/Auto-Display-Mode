@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Generic;
 using System.Drawing;
 using System.Windows.Forms;
 using AutoDisplayMode.Core;
@@ -15,8 +14,6 @@ namespace AutoDisplayMode.Settings
         readonly CheckBox ignoreRemote;
         readonly CheckBox notifications;
         readonly CheckBox startWithWindows;
-        readonly List<Label> sections = new();
-        Font? bold;
         AppConfig draft = new();
 
         public GeneralPage() : base("一般設定")
@@ -129,32 +126,6 @@ namespace AutoDisplayMode.Settings
             Anchor = AnchorStyles.Left,
         };
 
-        Label Section(string text)
-        {
-            var label = new Label
-            {
-                Text = text,
-                AutoSize = true,
-                Margin = new Padding(0, 8, 3, 6),
-            };
-            sections.Add(label);
-            return label;
-        }
-
-        /// <summary>分段標題用粗體的分頁字型（分頁加入設定視窗後才會拿到視窗的字型）。</summary>
-        protected override void OnFontChanged(EventArgs e)
-        {
-            base.OnFontChanged(e);
-            Font? previous = bold;
-            bold = new Font(Font, FontStyle.Bold);
-            foreach (Label s in sections) s.Font = bold;
-            previous?.Dispose();
-        }
-
-        protected override void Dispose(bool disposing)
-        {
-            base.Dispose(disposing);
-            if (disposing) bold?.Dispose();
-        }
+        Label Section(string text) => BoldLabel(text, new Padding(0, 8, 3, 6));
     }
 }

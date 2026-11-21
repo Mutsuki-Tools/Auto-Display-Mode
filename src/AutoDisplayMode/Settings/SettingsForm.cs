@@ -24,7 +24,7 @@ namespace AutoDisplayMode.Settings
         bool showingHelp;
         bool discardOnClose;   // 關閉時不確認（程式結束時）
 
-        public SettingsForm(AppCoordinator app, Icon icon, string appTitle)
+        public SettingsForm(AppCoordinator app, IVirtualDisplayDriverInstaller driver, Icon icon, string appTitle)
         {
             this.app = app;
             this.appTitle = appTitle;
@@ -51,7 +51,7 @@ namespace AutoDisplayMode.Settings
             CancelButton = cancel;
 
             modesPage = new ModesPage(app);
-            pages = new SettingsPage[] { modesPage, new LayoutPage(app), new SwitchConditionsPage(app), new GeneralPage() };
+            pages = new SettingsPage[] { modesPage, new LayoutPage(app), new SwitchConditionsPage(app), new GeneralPage(driver) };
 
             tabs = new TabControl { Dock = DockStyle.Fill };
             foreach (SettingsPage page in pages)

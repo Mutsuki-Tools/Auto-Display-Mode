@@ -430,6 +430,8 @@ ui_driver UI_UNINSTALL "移除驅動" "未安裝"
 indent "$LOGS/status-after-uninstall.txt"
 write_env UNINSTALL_DEVICE_COUNT "$(value "$LOGS/status-after-uninstall.txt" 'DEVICE_COUNT=[0-9]*' | cut -d= -f2)"
 write_env UNINSTALL_CERT_ROOT "$(value "$LOGS/status-after-uninstall.txt" 'CERT_Root=.*' | cut -d= -f2-)"
+write_env UNINSTALL_CERT_PUBLISHER "$(value "$LOGS/status-after-uninstall.txt" 'CERT_TrustedPublisher=.*' | cut -d= -f2-)"
+write_env UNINSTALL_PACKAGES "$(value "$LOGS/status-after-uninstall.txt" 'PACKAGES=.*' | cut -d= -f2-)"
 display_devices > "$LOGS/display-devices-after-uninstall.txt"
 if diff "$LOGS/display-devices-before.txt" "$LOGS/display-devices-after-uninstall.txt" >/dev/null; then
   write_env DISPLAY_DEVICES_SAME_AS_BEFORE yes

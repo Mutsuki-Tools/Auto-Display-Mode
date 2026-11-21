@@ -37,7 +37,7 @@ $infverif = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\Tools\*\x64\
 & $infverif.FullName /u (Join-Path $pkgDir 'SudoVDA.inf')
 if ($LASTEXITCODE) { throw 'INF 驗證失敗' }
 
-# 3. 拋棄式自簽憑證
+# 3. 拋棄式自簽憑證（程式以主旨開頭 "CN=AutoDisplayMode SudoVDA" 認出自己的憑證與驅動套件，不要改掉這個開頭）
 $subject = 'CN=AutoDisplayMode SudoVDA (disposable ' + (Get-Date -Format 'yyyy-MM-dd') + ')'
 $cert = New-SelfSignedCertificate -Type CodeSigningCert -Subject $subject -CertStoreLocation Cert:\CurrentUser\My `
     -KeyAlgorithm RSA -KeyLength 3072 -HashAlgorithm SHA256 -NotAfter (Get-Date).AddYears(30)

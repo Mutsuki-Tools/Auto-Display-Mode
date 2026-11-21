@@ -102,6 +102,15 @@ static class Program
             Log("CERT_" + name + "=" + (mine.Count == 0 ? "(none)" : string.Join(", ", mine.Select(c => c.Subject + " " + c.Thumbprint))));
             store.Close();
         }
+        // 驅動存放區中內容提到 SudoVDA 的套件（oemNN.inf）：移除驅動後應該是 (none)
+        var packages = new List<string>();
+        foreach (string oem in Directory.GetFiles(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "INF"), "oem*.inf"))
+        {
+            string text;
+            try { text = File.ReadAllText(oem); } catch { continue; }
+            if (text.IndexOf("SudoVDA", StringComparison.OrdinalIgnoreCase) >= 0) packages.Add(Path.GetFileName(oem));
+        }
+        Log("PACKAGES=" + (packages.Count == 0 ? "(none)" : string.Join(", ", packages)));
         var t = ReadTarget();
         Log("VIRTUAL_PRESENT=" + (t != null && TargetPresent(t.Value)));
         Log("ACTIVE=" + DescribeActive());

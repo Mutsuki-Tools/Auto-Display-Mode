@@ -5,20 +5,26 @@
 using System;
 using System.Threading;
 using System.Windows.Forms;
+using AutoDisplayMode.Windows;
 
 namespace AutoDisplayMode
 {
     static class Program
     {
         [STAThread]
-        static void Main()
+        static int Main(string[] args)
         {
+            // 以系統管理員身分重新啟動自己來安裝或移除驅動的子程序：在拿單一執行個體的 mutex 之前處理
+            // （主程式正在執行，mutex 已被拿走），而且不建立工作列圖示與協調者（協調者一建立就會讀寫 cfg）
+            int? exitCode = SudoVdaDriverInstaller.TryRunElevatedCommand(args);
+            if (exitCode != null) return exitCode.Value;
+
             using var mutex = new Mutex(true, "AutoDisplayMode_SingleInstance", out bool createdNew);
             if (!createdNew)
             {
                 MessageBox.Show("Auto Display Mode 已經在執行中，請到工作列右下角的圖示操作。",
                     "Auto Display Mode", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                return;
+                return 0;
             }
 
             Application.EnableVisualStyles();
@@ -30,6 +36,7 @@ namespace AutoDisplayMode
             };
             Application.Run(new TrayApp());
             GC.KeepAlive(mutex);
+            return 0;
         }
     }
 }

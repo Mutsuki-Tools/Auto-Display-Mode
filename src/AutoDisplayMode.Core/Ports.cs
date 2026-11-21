@@ -94,6 +94,53 @@ namespace AutoDisplayMode.Core
         void SetEnabled(bool enabled);
     }
 
+    /// <summary>虛擬螢幕驅動的狀態（設定視窗的「一般設定」分頁顯示）。</summary>
+    public enum DriverState
+    {
+        /// <summary>沒有安裝，驅動檔齊全，可以安裝。</summary>
+        NotInstalled,
+
+        /// <summary>已安裝而且可以使用。</summary>
+        Installed,
+
+        /// <summary>沒有安裝，而且 exe 旁邊找不到驅動檔。</summary>
+        FilesMissing,
+
+        /// <summary>裝置存在但無法使用（例如驅動無法啟動、需要重新開機），或電腦上有其他軟體裝的同一個驅動。</summary>
+        Unavailable,
+    }
+
+    /// <summary>虛擬螢幕驅動目前的狀態。</summary>
+    /// <param name="State">狀態。</param>
+    /// <param name="Detail">補充說明，例如驅動檔應該放在哪裡、無法使用的原因；沒有時為空字串。</param>
+    /// <param name="CanInstall">可以安裝（驅動檔齊全，而且還沒安裝好）。</param>
+    /// <param name="CanUninstall">電腦上有本程式的驅動，或安裝時留下的裝置、驅動套件、憑證，可以移除。</param>
+    public sealed record DriverStatus(DriverState State, string Detail, bool CanInstall, bool CanUninstall);
+
+    /// <summary>安裝或移除的結果。</summary>
+    /// <param name="Succeeded">是否成功；失敗時電腦上的驅動維持原狀（安裝會盡量復原已做的步驟）。</param>
+    /// <param name="Message">失敗的原因，或成功時要提醒的事（例如需要重新開機）；沒有時為空字串。</param>
+    public sealed record DriverOperationResult(bool Succeeded, string Message);
+
+    /// <summary>
+    /// 虛擬螢幕驅動的安裝與移除。驅動檔放在 exe 旁邊的 drivers\sudovda\。
+    /// 安裝與移除需要系統管理員權限：實作以提權的子程序執行（會跳出 UAC），使用者取消時回傳失敗。
+    /// </summary>
+    public interface IVirtualDisplayDriverInstaller
+    {
+        /// <summary>驅動檔應該放的資料夾（exe 所在資料夾\drivers\sudovda）。</summary>
+        string PackageFolder { get; }
+
+        /// <summary>讀取目前的狀態（不需要系統管理員權限；可能要幾十毫秒，可在背景執行緒呼叫）。</summary>
+        DriverStatus GetStatus();
+
+        /// <summary>安裝驅動。須在 UI 執行緒呼叫（UAC 視窗）；等待子程序時不卡住 UI。</summary>
+        System.Threading.Tasks.Task<DriverOperationResult> InstallAsync();
+
+        /// <summary>移除裝置、驅動套件與安裝時匯入的憑證。須在 UI 執行緒呼叫。</summary>
+        System.Threading.Tasks.Task<DriverOperationResult> UninstallAsync();
+    }
+
     public enum NotificationKind
     {
         Info,

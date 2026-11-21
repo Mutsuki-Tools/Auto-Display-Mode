@@ -1,11 +1,16 @@
 using System;
 using System.Drawing;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 using AutoDisplayMode.Core;
 
 namespace AutoDisplayMode.Settings
 {
-    /// <summary>「一般設定」分頁：滑鼠移動門檻、聲音音量門檻、聲音持續秒數、忽略遠端輸入、自動切換通知、開機登入時自動開啟。</summary>
+    /// <summary>
+    /// 「一般設定」分頁：滑鼠移動門檻、聲音音量門檻、聲音持續秒數、忽略遠端輸入、自動切換通知、開機登入時自動開啟，
+    /// 以及虛擬螢幕驅動的狀態與「安裝驅動」「移除驅動」。
+    /// 驅動的安裝與移除按下就立即執行，不屬於設定副本，不算未套用的變更（不呼叫 <see cref="SettingsPage.MarkEdited"/>）。
+    /// </summary>
     sealed class GeneralPage : SettingsPage
     {
         readonly NumericUpDown mouseThreshold;
@@ -14,10 +19,19 @@ namespace AutoDisplayMode.Settings
         readonly CheckBox ignoreRemote;
         readonly CheckBox notifications;
         readonly CheckBox startWithWindows;
+        readonly IVirtualDisplayDriverInstaller driver;
+        readonly Label driverState;
+        readonly Label driverDetail;
+        readonly Button installDriver;
+        readonly Button uninstallDriver;
+        DriverStatus? driverStatus;   // 最後一次讀到的狀態；還沒讀到時為 null
+        bool driverBusy;              // 安裝或移除中
+        int statusVersion;            // 只採用最新一次讀取的結果
         AppConfig draft = new();
 
-        public GeneralPage() : base("一般設定")
+        public GeneralPage(IVirtualDisplayDriverInstaller driver) : base("一般設定")
         {
+            this.driver = driver;
             // 欄位範圍與讀取 cfg 時的正規化一致（AppConfig 的 Min／Max 常數）
             mouseThreshold = Number(AppConfig.MinMouseMoveThreshold, AppConfig.MaxMouseMoveThreshold, 0, 1);
             audioThreshold = Number((decimal)AppConfig.MinAudioThreshold, (decimal)AppConfig.MaxAudioThreshold, 3, 0.001m);
@@ -32,6 +46,14 @@ namespace AutoDisplayMode.Settings
             ignoreRemote.CheckedChanged += delegate { draft.IgnoreRemoteInput = ignoreRemote.Checked; MarkEdited(); };
             notifications.CheckedChanged += delegate { draft.ShowNotifications = notifications.Checked; MarkEdited(); };
             startWithWindows.CheckedChanged += delegate { draft.StartWithWindows = startWithWindows.Checked; MarkEdited(); };
+
+            driverState = new Label { AutoSize = true, Anchor = AnchorStyles.Left, Text = "檢查中…" };
+            driverDetail = Hint("");
+            driverDetail.Visible = false;
+            installDriver = DriverButton("安裝驅動");
+            uninstallDriver = DriverButton("移除驅動");
+            installDriver.Click += delegate { RunDriverOperation(install: true); };
+            uninstallDriver.Click += delegate { RunDriverOperation(install: false); };
 
             AutoScroll = true;   // 視窗縮小時整頁捲動
             var table = new TableLayoutPanel
@@ -72,6 +94,23 @@ namespace AutoDisplayMode.Settings
             Wide(notifications);
             Wide(startWithWindows);
 
+            Wide(Section("虛擬螢幕驅動"));
+            table.Controls.Add(Caption("狀態："));
+            table.Controls.Add(driverState);
+            table.SetColumnSpan(driverState, 2);
+            Wide(driverDetail);
+            var driverButtons = new FlowLayoutPanel
+            {
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                WrapContents = false,
+                Margin = new Padding(0, 0, 0, 3),
+            };
+            driverButtons.Controls.AddRange(new Control[] { installDriver, uninstallDriver });
+            Wide(driverButtons);
+            Wide(Hint("潛行模式用這個驅動產生虛擬螢幕。安裝與移除需要系統管理員權限（會跳出 UAC），\n" +
+                      "按下後立即執行，不必按「套用」。"));
+
             Controls.Add(table);
         }
 
@@ -83,7 +122,14 @@ namespace AutoDisplayMode.Settings
             "・偵測到使用時，忽略遠端連線軟體送出的鍵盤滑鼠輸入：開啟時，遠端操作不會觸發「偵測到使用」；閒置計時仍會被遠端操作打斷。\n\n" +
             "【其他】\n" +
             "・自動切換時跳出通知：依切換條件自動切換時，在工作列跳出通知。\n" +
-            "・開機登入時自動開啟：登入 Windows 後自動在工作列執行。";
+            "・開機登入時自動開啟：登入 Windows 後自動在工作列執行。\n\n" +
+            "【虛擬螢幕驅動】潛行模式關閉所有螢幕時，用這個驅動產生一個虛擬螢幕，讓遠端連線軟體（例如 Chrome 遠端桌面）仍有畫面可以擷取。" +
+            "驅動是本程式內附的 SudoVDA，放在程式旁邊的 drivers\\sudovda 資料夾；搬到別台電腦時，連同這個資料夾一起複製。\n" +
+            "・安裝驅動：匯入驅動的憑證（受信任的根憑證、受信任的發行者），再安裝驅動。\n" +
+            "・移除驅動：移除驅動與裝置，並刪除安裝時匯入的憑證。\n" +
+            "・安裝與移除會變更整台電腦的驅動與憑證，所以需要系統管理員權限：按下後會跳出 UAC，按「是」才會執行。" +
+            "按下就立即執行，不必按「套用」，按「取消」也不會復原。之後新增、移除虛擬螢幕不需要系統管理員權限。\n" +
+            "・狀態：已安裝、未安裝、找不到驅動檔（drivers 資料夾沒有跟著 exe）、無法使用（例如需要重新開機，或電腦上有其他軟體裝的同一個驅動）。";
 
         protected override void OnLoad(AppConfig d)
         {
@@ -94,7 +140,97 @@ namespace AutoDisplayMode.Settings
             ignoreRemote.Checked = d.IgnoreRemoteInput;
             notifications.Checked = d.ShowNotifications;
             startWithWindows.Checked = d.StartWithWindows;
+            RefreshDriverStatus();   // 開啟設定視窗與每次切換到這個分頁時重新讀取
         }
+
+        // ------------------------------------------------------------
+        //  虛擬螢幕驅動
+        // ------------------------------------------------------------
+
+        /// <summary>在背景讀取驅動狀態，讀到後更新畫面（安裝或移除中不讀）。</summary>
+        async void RefreshDriverStatus()
+        {
+            if (driverBusy) return;
+            await ReadDriverStatusAsync();
+        }
+
+        async Task ReadDriverStatusAsync()
+        {
+            int version = ++statusVersion;
+            DriverStatus status;
+            try
+            {
+                status = await Task.Run(driver.GetStatus);
+            }
+            catch (Exception e)
+            {
+                status = new DriverStatus(DriverState.Unavailable, "無法讀取驅動狀態：" + e.Message, CanInstall: false, CanUninstall: false);
+            }
+            if (version != statusVersion || IsDisposed) return;
+            driverStatus = status;
+            ShowDriverStatus();
+        }
+
+        void ShowDriverStatus()
+        {
+            if (driverStatus == null) return;
+            driverState.Text = driverStatus.State switch
+            {
+                DriverState.Installed => "已安裝",
+                DriverState.NotInstalled => "未安裝",
+                DriverState.FilesMissing => "找不到驅動檔",
+                _ => "無法使用",
+            };
+            driverState.ForeColor = driverStatus.State is DriverState.Installed or DriverState.NotInstalled ? SystemColors.ControlText : Color.Firebrick;
+            driverDetail.Text = driverStatus.Detail;
+            driverDetail.Visible = driverStatus.Detail.Length > 0;
+            installDriver.Enabled = !driverBusy && driverStatus.CanInstall;
+            uninstallDriver.Enabled = !driverBusy && driverStatus.CanUninstall;
+        }
+
+        /// <summary>
+        /// 安裝或移除驅動：立即執行（跳出 UAC），與設定副本的套用無關。完成後重新讀取狀態；失敗或有提醒時跳出訊息。
+        /// </summary>
+        async void RunDriverOperation(bool install)
+        {
+            if (driverBusy) return;
+            driverBusy = true;
+            statusVersion++;   // 忽略進行中的讀取
+            installDriver.Enabled = uninstallDriver.Enabled = false;
+            driverState.Text = install ? "安裝中…" : "移除中…";
+            driverState.ForeColor = SystemColors.ControlText;
+            driverDetail.Text = "請在 UAC 視窗按「是」，完成後狀態會自動更新。";
+            driverDetail.Visible = true;
+
+            DriverOperationResult result;
+            try
+            {
+                result = install ? await driver.InstallAsync() : await driver.UninstallAsync();
+            }
+            catch (Exception e)
+            {
+                result = new DriverOperationResult(false, e.Message);
+            }
+            driverBusy = false;
+            if (IsDisposed) return;   // 設定視窗已關閉
+
+            await ReadDriverStatusAsync();
+            if (IsDisposed) return;
+            string action = install ? "安裝驅動" : "移除驅動";
+            if (!result.Succeeded)
+                MessageBox.Show(FindForm(), "無法" + action + "：\n" + result.Message, FindForm()?.Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            else if (result.Message.Length > 0)
+                MessageBox.Show(FindForm(), action + "完成。\n" + result.Message, FindForm()?.Text, MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+
+        static Button DriverButton(string text) => new()
+        {
+            Text = text,
+            AutoSize = true,
+            MinimumSize = new Size(90, 0),
+            Enabled = false,   // 讀到狀態後才依狀態啟用
+            Margin = new Padding(3, 3, 6, 3),
+        };
 
         public override void CommitEdits()
         {

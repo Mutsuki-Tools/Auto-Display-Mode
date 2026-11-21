@@ -19,4 +19,13 @@
 powershell -ExecutionPolicy Bypass -File drivers\sudovda\build-driver.ps1
 ```
 
-每次重新編譯都會換一張新憑證。已經裝了舊版的電腦，要先用舊版的程式移除驅動，再安裝新版。
+每次重新編譯都會換一張新憑證。已經裝了舊版的電腦，先在設定視窗按「移除驅動」，換上新版的檔案後再按「安裝驅動」。
+
+程式以憑證主旨的開頭 `CN=AutoDisplayMode SudoVDA` 認出自己的憑證與驅動套件（驅動套件看目錄檔的簽章者），所以新版程式也能移除舊版裝的驅動，而其他軟體（例如 Apollo）裝的 SudoVDA 不會被移除。修改 `build-driver.ps1` 時不要改掉這個開頭。
+
+## 安裝與移除
+
+程式的設定視窗（「一般設定」分頁）按「安裝驅動」「移除驅動」，程式以系統管理員身分重新啟動自己（`--install-driver`／`--uninstall-driver`，跳出 UAC）執行，只用 Windows 內建的 API（實作在 `src/AutoDisplayMode/Windows/SudoVdaSetup.cs`）：
+
+- 安裝：匯入公開憑證，建立根列舉的裝置節點（硬體 ID `Root\SudoMaker\SudoVDA`），以 `UpdateDriverForPlugAndPlayDevices` 安裝 INF。失敗時復原這次匯入的憑證、建立的裝置節點與加入存放區的驅動套件。
+- 移除：移除本程式的裝置（`DiUninstallDevice`）、驅動存放區中本程式的驅動套件（`SetupUninstallOEMInf`），以及所有版本的憑證。

@@ -20,6 +20,7 @@ namespace AutoDisplayMode
         readonly AppCoordinator app;
         readonly WindowsUsageSignals signals;
         readonly WindowsMonitorSystem monitors;
+        readonly SudoVdaDriverInstaller driver = new(SudoVdaDriverInstaller.DefaultPackageFolder());
         readonly NotifyIcon tray;
         readonly ContextMenuStrip menu;
         readonly ToolStripMenuItem miStatus;
@@ -119,7 +120,7 @@ namespace AutoDisplayMode
                 return;
             }
 
-            var form = new SettingsForm(app, tray.Icon, AppTitle);
+            var form = new SettingsForm(app, driver, tray.Icon, AppTitle);
             form.FormClosed += delegate
             {
                 form.Dispose();

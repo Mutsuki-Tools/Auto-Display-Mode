@@ -8,7 +8,7 @@ namespace AutoDisplayMode.Settings
 {
     /// <summary>
     /// 「一般設定」分頁：滑鼠移動門檻、聲音音量門檻、聲音持續秒數、忽略遠端輸入、自動切換通知、開機登入時自動開啟，
-    /// 以及虛擬螢幕驅動的狀態與「安裝驅動」「移除驅動」。
+    /// 以及虛擬螢幕驅動的狀態與「安裝驅動」「移除驅動」（<see cref="DriverController"/>，與模式分頁共用）。
     /// 驅動的安裝與移除按下就立即執行，不屬於設定副本，不算未套用的變更（不呼叫 <see cref="SettingsPage.MarkEdited"/>）。
     /// </summary>
     sealed class GeneralPage : SettingsPage
@@ -19,17 +19,14 @@ namespace AutoDisplayMode.Settings
         readonly CheckBox ignoreRemote;
         readonly CheckBox notifications;
         readonly CheckBox startWithWindows;
-        readonly IVirtualDisplayDriverInstaller driver;
+        readonly DriverController driver;
         readonly Label driverState;
         readonly Label driverDetail;
         readonly Button installDriver;
         readonly Button uninstallDriver;
-        DriverStatus? driverStatus;   // 最後一次讀到的狀態；還沒讀到時為 null
-        bool driverBusy;              // 安裝或移除中
-        int statusVersion;            // 只採用最新一次讀取的結果
         AppConfig draft = new();
 
-        public GeneralPage(IVirtualDisplayDriverInstaller driver) : base("一般設定")
+        public GeneralPage(DriverController driver) : base("一般設定")
         {
             this.driver = driver;
             // 欄位範圍與讀取 cfg 時的正規化一致（AppConfig 的 Min／Max 常數）
@@ -52,8 +49,9 @@ namespace AutoDisplayMode.Settings
             driverDetail.Visible = false;
             installDriver = DriverButton("安裝驅動");
             uninstallDriver = DriverButton("移除驅動");
-            installDriver.Click += delegate { RunDriverOperation(install: true); };
-            uninstallDriver.Click += delegate { RunDriverOperation(install: false); };
+            installDriver.Click += delegate { driver.Run(install: true); };
+            uninstallDriver.Click += delegate { driver.Run(install: false); };
+            driver.Changed += ShowDriverStatus;
 
             AutoScroll = true;   // 視窗縮小時整頁捲動
             var table = new TableLayoutPanel
@@ -88,7 +86,8 @@ namespace AutoDisplayMode.Settings
             Row("聲音音量門檻：", audioThreshold, "（0～1）", "聲音峰值超過這個值才算有聲音。");
             Row("聲音持續秒數：", audioSeconds, "秒", "聲音要連續播放這麼久才算一次使用，過濾通知音這類短暫聲音。");
             Wide(ignoreRemote);
-            Wide(Hint("開啟時，遠端操作不會觸發「偵測到使用」；閒置計時仍會被遠端操作打斷。"));
+            Wide(Hint("開啟時，遠端操作不會觸發「偵測到使用」；閒置計時仍會被遠端操作打斷。\n" +
+                      "潛行模式的內建切換條件不受這個設定影響，一律只認實體鍵盤滑鼠。"));
 
             Wide(Section("其他"));
             Wide(notifications);
@@ -119,7 +118,8 @@ namespace AutoDisplayMode.Settings
             "・滑鼠移動門檻：「偵測到使用」時，滑鼠要移動超過這個距離才算使用。桌面震動造成誤判時調高。閒置計時不看這個門檻，任何輸入都會打斷。\n" +
             "・聲音音量門檻：聲音峰值超過這個值（0～1）才算有聲音。背景雜音被當成聲音時調高，播放中的影片或音樂沒被偵測到時調低。\n" +
             "・聲音持續秒數：聲音要連續播放這麼久才算一次使用，過濾通知音這類短暫聲音。\n" +
-            "・偵測到使用時，忽略遠端連線軟體送出的鍵盤滑鼠輸入：開啟時，遠端操作不會觸發「偵測到使用」；閒置計時仍會被遠端操作打斷。\n\n" +
+            "・偵測到使用時，忽略遠端連線軟體送出的鍵盤滑鼠輸入：開啟時，遠端操作不會觸發「偵測到使用」；閒置計時仍會被遠端操作打斷。" +
+            "潛行模式的內建切換條件不受這個設定影響，一律只認實體鍵盤滑鼠（在 Chrome 遠端桌面裡操作不會離開潛行模式）。\n\n" +
             "【其他】\n" +
             "・自動切換時跳出通知：依切換條件自動切換時，在工作列跳出通知。\n" +
             "・開機登入時自動開啟：登入 Windows 後自動在工作列執行。\n\n" +
@@ -129,7 +129,8 @@ namespace AutoDisplayMode.Settings
             "・移除驅動：移除驅動與裝置，並刪除安裝時匯入的憑證。\n" +
             "・安裝與移除會變更整台電腦的驅動與憑證，所以需要系統管理員權限：按下後會跳出 UAC，按「是」才會執行。" +
             "按下就立即執行，不必按「套用」，按「取消」也不會復原。之後新增、移除虛擬螢幕不需要系統管理員權限。\n" +
-            "・狀態：已安裝、未安裝、找不到驅動檔（drivers 資料夾沒有跟著 exe）、無法使用（例如需要重新開機，或電腦上有其他軟體裝的同一個驅動）。";
+            "・狀態：已安裝、未安裝、找不到驅動檔（drivers 資料夾沒有跟著 exe）、無法使用（例如需要重新開機，或電腦上有其他軟體裝的同一個驅動）。" +
+            "不是「已安裝」時無法切換到潛行模式，模式分頁的潛行模式旁也會顯示警告與「安裝驅動」按鈕。";
 
         protected override void OnLoad(AppConfig d)
         {
@@ -140,87 +141,28 @@ namespace AutoDisplayMode.Settings
             ignoreRemote.Checked = d.IgnoreRemoteInput;
             notifications.Checked = d.ShowNotifications;
             startWithWindows.Checked = d.StartWithWindows;
-            RefreshDriverStatus();   // 開啟設定視窗與每次切換到這個分頁時重新讀取
+            ShowDriverStatus();   // 狀態由設定視窗在開啟、切換分頁與套用後重新讀取
         }
 
         // ------------------------------------------------------------
         //  虛擬螢幕驅動
         // ------------------------------------------------------------
 
-        /// <summary>在背景讀取驅動狀態，讀到後更新畫面（安裝或移除中不讀）。</summary>
-        async void RefreshDriverStatus()
-        {
-            if (driverBusy) return;
-            await ReadDriverStatusAsync();
-        }
-
-        async Task ReadDriverStatusAsync()
-        {
-            int version = ++statusVersion;
-            DriverStatus status;
-            try
-            {
-                status = await Task.Run(driver.GetStatus);
-            }
-            catch (Exception e)
-            {
-                status = new DriverStatus(DriverState.Unavailable, "無法讀取驅動狀態：" + e.Message, CanInstall: false, CanUninstall: false);
-            }
-            if (version != statusVersion || IsDisposed) return;
-            driverStatus = status;
-            ShowDriverStatus();
-        }
-
         void ShowDriverStatus()
         {
-            if (driverStatus == null) return;
-            driverState.Text = driverStatus.State switch
-            {
-                DriverState.Installed => "已安裝",
-                DriverState.NotInstalled => "未安裝",
-                DriverState.FilesMissing => "找不到驅動檔",
-                _ => "無法使用",
-            };
-            driverState.ForeColor = driverStatus.State is DriverState.Installed or DriverState.NotInstalled ? SystemColors.ControlText : Color.Firebrick;
-            driverDetail.Text = driverStatus.Detail;
-            driverDetail.Visible = driverStatus.Detail.Length > 0;
-            installDriver.Enabled = !driverBusy && driverStatus.CanInstall;
-            uninstallDriver.Enabled = !driverBusy && driverStatus.CanUninstall;
+            if (IsDisposed) return;
+            driverState.Text = driver.StateText;
+            driverState.ForeColor = driver.IsError ? Color.Firebrick : SystemColors.ControlText;
+            driverDetail.Text = driver.DetailText;
+            driverDetail.Visible = driver.DetailText.Length > 0;
+            installDriver.Enabled = driver.CanInstall;
+            uninstallDriver.Enabled = driver.CanUninstall;
         }
 
-        /// <summary>
-        /// 安裝或移除驅動：立即執行（跳出 UAC），與設定副本的套用無關。完成後重新讀取狀態；失敗或有提醒時跳出訊息。
-        /// </summary>
-        async void RunDriverOperation(bool install)
+        protected override void Dispose(bool disposing)
         {
-            if (driverBusy) return;
-            driverBusy = true;
-            statusVersion++;   // 忽略進行中的讀取
-            installDriver.Enabled = uninstallDriver.Enabled = false;
-            driverState.Text = install ? "安裝中…" : "移除中…";
-            driverState.ForeColor = SystemColors.ControlText;
-            driverDetail.Text = "請在 UAC 視窗按「是」，完成後狀態會自動更新。";
-            driverDetail.Visible = true;
-
-            DriverOperationResult result;
-            try
-            {
-                result = install ? await driver.InstallAsync() : await driver.UninstallAsync();
-            }
-            catch (Exception e)
-            {
-                result = new DriverOperationResult(false, e.Message);
-            }
-            driverBusy = false;
-            if (IsDisposed) return;   // 設定視窗已關閉
-
-            await ReadDriverStatusAsync();
-            if (IsDisposed) return;
-            string action = install ? "安裝驅動" : "移除驅動";
-            if (!result.Succeeded)
-                MessageBox.Show(FindForm(), "無法" + action + "：\n" + result.Message, FindForm()?.Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
-            else if (result.Message.Length > 0)
-                MessageBox.Show(FindForm(), action + "完成。\n" + result.Message, FindForm()?.Text, MessageBoxButtons.OK, MessageBoxIcon.Information);
+            if (disposing) driver.Changed -= ShowDriverStatus;
+            base.Dispose(disposing);
         }
 
         static Button DriverButton(string text) => new()

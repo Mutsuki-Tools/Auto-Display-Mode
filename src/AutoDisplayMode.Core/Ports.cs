@@ -21,7 +21,14 @@ namespace AutoDisplayMode.Core
         /// 開始在背景套用 <paramref name="states"/>（每台接上的螢幕一筆，主螢幕位於 (0,0)）。
         /// 結束後轉接層須在 UI 執行緒呼叫 <see cref="AppCoordinator.OnSwitchFinished"/>。
         /// </summary>
-        void BeginApply(IReadOnlyList<MonitorSettings> states);
+        /// <param name="states">每台接上的螢幕要套用的狀態（不含虛擬螢幕）。</param>
+        /// <param name="virtualMode">
+        /// null：虛擬螢幕（若存在）不開啟。不為 null：潛行模式，<paramref name="states"/> 全部是關閉的，
+        /// 只開啟虛擬螢幕並設為這個解析度與更新率（更新率 59 與 60 視為相同）。
+        /// 虛擬螢幕由 <see cref="IVirtualDisplay.Create"/> 建立後可能要一點時間才出現：轉接層要等它存在，
+        /// 不論 Windows 有沒有自動開啟它，都明確套用「只開虛擬螢幕」。這種套用失敗時不必還原，由協調者處理。
+        /// </param>
+        void BeginApply(IReadOnlyList<MonitorSettings> states, VideoMode? virtualMode);
 
         /// <summary>
         /// 接上的螢幕或它們的狀態可能改變（插拔螢幕、Windows 顯示設定改變，包括程式自己套用螢幕設定時）。
@@ -31,14 +38,47 @@ namespace AutoDisplayMode.Core
     }
 
     /// <summary>
+    /// 虛擬螢幕：本程式以 SudoVDA 驅動建立的顯示畫面（ADR-0005），潛行模式時是唯一開啟的畫面。
+    /// 所有方法都在 UI 執行緒呼叫。驅動超過約 3 秒沒收到心跳（或任何指令）就會自己移除虛擬螢幕。
+    /// </summary>
+    public interface IVirtualDisplay
+    {
+        /// <summary>
+        /// 建立虛擬螢幕（已經存在時沿用）。驅動不可用或建立失敗時丟出例外，訊息給使用者看。
+        /// 建立後可能要一點時間才出現在 Windows 的顯示設定中（<see cref="IMonitorSystem.BeginApply"/> 會等）。
+        /// </summary>
+        void Create(VideoMode mode);
+
+        /// <summary>移除虛擬螢幕；驅動回報找不到時當成已經被移除。失敗時丟出例外。</summary>
+        void Remove();
+
+        /// <summary>
+        /// 送出心跳（協調者從建立到移除，每秒從 UI 執行緒呼叫一次）。失敗時丟出例外。
+        /// 開關螢幕時 UI 執行緒可能卡住數秒，轉接層可以在最後一次呼叫後的幾秒內代為維持心跳；
+        /// 不再呼叫時心跳必須在幾秒內停止（介面卡死時讓驅動移除虛擬螢幕）。
+        /// </summary>
+        void Ping();
+
+        /// <summary>本程式建立的虛擬螢幕目前是否存在（Windows 的顯示設定中看得到它）。查詢失敗時丟出例外。</summary>
+        bool Exists { get; }
+    }
+
+    /// <summary>
+    /// 自上次讀取以來，鍵盤滑鼠鉤子偵測到的使用（已經過滑鼠移動門檻）。
+    /// </summary>
+    /// <param name="Any">任何鍵盤滑鼠使用，包括遠端連線軟體送出（注入）的輸入。</param>
+    /// <param name="Physical">實體的鍵盤滑鼠使用（不是注入的輸入，也不是 Windows 遠端桌面工作階段）。</param>
+    public readonly record struct HookUsage(bool Any, bool Physical);
+
+    /// <summary>
     /// 使用訊號：提供鍵盤滑鼠、聲音的使用跡象，並依核心的指令安裝或移除滑鼠與鍵盤鉤子。
     /// </summary>
     public interface IUsageSignals
     {
         /// <summary>
-        /// 自上次呼叫以來，鍵盤滑鼠鉤子是否偵測到實體的鍵盤滑鼠使用（已經過移動門檻與遠端過濾）。呼叫後清除。
+        /// 自上次呼叫以來，鍵盤滑鼠鉤子偵測到的使用（已經過滑鼠移動門檻），分成全部輸入與只有實體輸入。呼叫後清除。
         /// </summary>
-        bool TakeHookUsage();
+        HookUsage TakeHookUsage();
 
         /// <summary>清除鉤子累積的使用，並重設滑鼠移動門檻的起點。</summary>
         void ResetHookTracking();
@@ -62,8 +102,7 @@ namespace AutoDisplayMode.Core
     /// <param name="Install">是否需要安裝低階滑鼠鉤子與低階鍵盤鉤子。</param>
     /// <param name="IgnoreUntilMs">在此時間（<see cref="IClock"/> 的毫秒）之前，鉤子收到的輸入都不算使用，並重設移動起點。</param>
     /// <param name="MoveThreshold">滑鼠要移動超過幾個像素才算使用。</param>
-    /// <param name="IgnoreRemoteInput">是否忽略遠端連線軟體送出（注入）的滑鼠與鍵盤輸入。</param>
-    public readonly record struct InputHookPolicy(bool Install, long IgnoreUntilMs, int MoveThreshold, bool IgnoreRemoteInput);
+    public readonly record struct InputHookPolicy(bool Install, long IgnoreUntilMs, int MoveThreshold);
 
     /// <summary>cfg 儲存：讀取／寫入 cfg 文字。</summary>
     public interface IConfigStore

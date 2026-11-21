@@ -191,6 +191,42 @@ namespace AutoDisplayMode.Core
         Off,
     }
 
+    /// <summary>模式的種類。建立後不能改變（一般模式和潛行模式不能互相轉換）。</summary>
+    public enum ModeKind
+    {
+        /// <summary>一般模式：以螢幕設定決定每台螢幕的狀態。</summary>
+        Normal,
+
+        /// <summary>潛行模式：所有螢幕都關閉，只開啟虛擬螢幕。</summary>
+        Remote,
+    }
+
+    /// <summary>虛擬螢幕的解析度與更新率。</summary>
+    public static class VirtualDisplayModes
+    {
+        /// <summary>新潛行模式的預設值：1920×1080@60。</summary>
+        public static readonly VideoMode Default = new(1920, 1080, 60);
+
+        /// <summary>
+        /// 設定視窗下拉選單列出的常見模式（未旋轉的寬高；更新率依解析度不同）。取自驅動實際提供的 55 個模式（票 02 的實測），
+        /// 略去不常見的 2880×1620、2400×1350、1440×810、960×540、800×600，以及與 60 重複的 59。
+        /// </summary>
+        public static readonly IReadOnlyList<VideoMode> Common = Build(
+            (3840, 2160, new[] { 240, 144, 120, 90, 72, 60, 30 }),
+            (2560, 1440, new[] { 240, 144, 120, 90, 72, 60, 30 }),
+            (1920, 1080, new[] { 240, 144, 120, 90, 72, 60, 30 }),
+            (1366, 768, new[] { 240, 144, 120, 90, 72, 60, 30 }),
+            (1280, 720, new[] { 144, 120, 90, 72, 60, 30 }));
+
+        static VideoMode[] Build(params (int W, int H, int[] Rates)[] rows) =>
+            rows.SelectMany(r => r.Rates.Select(hz => new VideoMode(r.W, r.H, hz))).ToArray();
+
+        /// <summary>
+        /// 更新率是否相同：59 與 60 視為相同（指定 60 Hz 建立的虛擬螢幕實際是 59.94 Hz，GDI 回報 59）。
+        /// </summary>
+        public static bool SameRefreshRate(int a, int b) => a == b || (Math.Min(a, b) == 59 && Math.Max(a, b) == 60);
+    }
+
     /// <summary>模式：一組有名稱的螢幕設定。以內部 ID 識別，名稱可改。</summary>
     public sealed class ModeConfig
     {
@@ -210,16 +246,26 @@ namespace AutoDisplayMode.Core
             0x8C8C8C, // 灰
         };
 
-        public ModeConfig(int id, string name)
+        public ModeConfig(int id, string name, ModeKind kind = ModeKind.Normal)
         {
             Id = id;
             Name = name;
+            Kind = kind;
         }
 
         /// <summary>模式的編號（cfg 的 [Mode.N]）。改名不變；套用設定時依模式的順序重新編號。</summary>
         public int Id { get; internal set; }
 
         public string Name { get; set; }
+
+        /// <summary>一般模式或潛行模式（建立後不能改變）。</summary>
+        public ModeKind Kind { get; internal set; }
+
+        /// <summary>潛行模式。</summary>
+        public bool IsRemote => Kind == ModeKind.Remote;
+
+        /// <summary>潛行模式的虛擬螢幕解析度與更新率（一般模式不使用）。</summary>
+        public VideoMode VirtualMode { get; set; } = VirtualDisplayModes.Default;
 
         /// <summary>工作列圖示顏色（0xRRGGBB）；<see cref="NoColor"/> 表示尚未指定。</summary>
         public int Color { get; set; } = NoColor;
@@ -338,7 +384,10 @@ namespace AutoDisplayMode.Core
         /// <summary>以新的 ID 與名稱深複製，其餘設定與螢幕設定相同（清單各自獨立）。</summary>
         public ModeConfig CopyAs(int id, string name)
         {
-            var m = new ModeConfig(id, name) { Color = Color, ManualAutoSwitch = ManualAutoSwitch, UnlistedMonitors = UnlistedMonitors };
+            var m = new ModeConfig(id, name, Kind)
+            {
+                Color = Color, ManualAutoSwitch = ManualAutoSwitch, UnlistedMonitors = UnlistedMonitors, VirtualMode = VirtualMode,
+            };
             m.Monitors.AddRange(Monitors);
             return m;
         }

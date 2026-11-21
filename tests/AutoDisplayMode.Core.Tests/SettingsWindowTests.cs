@@ -191,7 +191,6 @@ namespace AutoDisplayMode.Core.Tests
             h.Run(10);
 
             Assert.Equal(25, h.Signals.Policy.MoveThreshold);
-            Assert.False(h.Signals.Policy.IgnoreRemoteInput);
 
             h.Signals.AudioPeak = 0.05f;   // 超過新的門檻 0.02（舊的門檻是 0.1）
             Assert.Equal(6, h.RunUntilSwitch(20));   // 聲音要連續超過 5 秒

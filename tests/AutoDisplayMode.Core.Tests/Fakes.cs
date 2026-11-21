@@ -13,7 +13,7 @@ namespace AutoDisplayMode.Core.Tests
     sealed class FakeSignals : IUsageSignals
     {
         readonly FakeClock clock;
-        bool hookUsage;
+        bool anyUsage, physicalUsage;
 
         public FakeSignals(FakeClock clock) => this.clock = clock;
 
@@ -31,13 +31,12 @@ namespace AutoDisplayMode.Core.Tests
         public void PressKey() => PhysicalInput();
 
         /// <summary>
-        /// 模擬遠端連線軟體送出（注入）的輸入：Windows 最後輸入時間改變，但真實鉤子在忽略遠端輸入時會濾掉，
-        /// 所以只有 <see cref="InputHookPolicy.IgnoreRemoteInput"/> 關閉時鉤子才算數。
+        /// 模擬遠端連線軟體送出（注入）的輸入：Windows 最後輸入時間改變；鉤子已安裝時只算在「全部輸入」，不算實體輸入。
         /// </summary>
         public void RemoteInput()
         {
             LastInputTick++;
-            if (!Policy.IgnoreRemoteInput && HookActive) hookUsage = true;
+            if (HookActive) anyUsage = true;
         }
 
         /// <summary>模擬鍵盤或滑鼠輸入，只改變 Windows 最後輸入時間（鉤子沒看到，例如沒有安裝）。</summary>
@@ -48,17 +47,17 @@ namespace AutoDisplayMode.Core.Tests
         void PhysicalInput()
         {
             LastInputTick++;
-            if (HookActive) hookUsage = true;
+            if (HookActive) anyUsage = physicalUsage = true;
         }
 
-        public bool TakeHookUsage()
+        public HookUsage TakeHookUsage()
         {
-            bool r = hookUsage;
-            hookUsage = false;
+            var r = new HookUsage(anyUsage, physicalUsage);
+            anyUsage = physicalUsage = false;
             return r;
         }
 
-        public void ResetHookTracking() => hookUsage = false;
+        public void ResetHookTracking() => anyUsage = physicalUsage = false;
         public float ReadAudioPeak() => AudioPeak;
         public void RequestAudioRefresh() => AudioRefreshRequests++;
         public void ApplyHookPolicy(InputHookPolicy policy) => Policy = policy;
@@ -101,8 +100,14 @@ namespace AutoDisplayMode.Core.Tests
         public List<DetectedMonitor> Monitors { get; set; }
         public bool Fail { get; set; }
 
+        /// <summary>與虛擬螢幕共用的呼叫紀錄（檢查順序用）：開始套用時記下「套用」或「套用 只開虛擬螢幕 WxH@Hz」。</summary>
+        public List<string> Log { get; set; } = new();
+
         /// <summary>每次開始套用時要求的完整螢幕狀態。</summary>
         public List<IReadOnlyList<MonitorSettings>> Applied { get; } = new();
+
+        /// <summary>每次開始套用時要求的虛擬螢幕模式（不是潛行模式時為 null）。</summary>
+        public List<VideoMode?> AppliedVirtual { get; } = new();
 
         public IReadOnlyList<DetectedMonitor> Detect() =>
             Fail ? throw new InvalidOperationException("偵測失敗") : Monitors.ToArray();
@@ -113,16 +118,68 @@ namespace AutoDisplayMode.Core.Tests
         /// <summary>開始套用時用來讀取目標模式名稱。</summary>
         public Func<string?>? TargetName { get; set; }
 
-        public void BeginApply(IReadOnlyList<MonitorSettings> states)
+        public void BeginApply(IReadOnlyList<MonitorSettings> states, VideoMode? virtualMode)
         {
             Applied.Add(states);
+            AppliedVirtual.Add(virtualMode);
             AppliedTargets.Add(TargetName?.Invoke());
+            Log.Add(virtualMode is VideoMode v ? "套用 只開虛擬螢幕 " + Fake.Text(v) : "套用");
         }
 
         public event Action? Changed;
 
         /// <summary>模擬插拔螢幕或 Windows 顯示設定改變。</summary>
         public void RaiseChanged() => Changed?.Invoke();
+    }
+
+    /// <summary>假的虛擬螢幕：記錄建立、移除與心跳；可模擬驅動不可用與意外消失。</summary>
+    sealed class FakeVirtualDisplay : IVirtualDisplay
+    {
+        /// <summary>與螢幕系統共用的呼叫紀錄：「建立 WxH@Hz」「移除」（心跳另外計數）。</summary>
+        public List<string> Log { get; set; } = new();
+
+        /// <summary>不為 null 時建立失敗，例外訊息為這段文字（例如驅動沒有安裝）。</summary>
+        public string? CreateError { get; set; }
+
+        bool exists;
+
+        public bool Exists
+        {
+            get => ExistsError ? throw new InvalidOperationException("無法查詢顯示設定") : exists;
+            set => exists = value;
+        }
+
+        /// <summary>查詢是否存在時丟出例外（例如 QueryDisplayConfig 失敗）。</summary>
+        public bool ExistsError { get; set; }
+
+        public int Pings { get; private set; }
+        public int Creates { get; private set; }
+        public int Removes { get; private set; }
+
+        public void Create(VideoMode mode)
+        {
+            if (CreateError != null) throw new InvalidOperationException(CreateError);
+            Creates++;
+            Exists = true;
+            Log.Add("建立 " + Fake.Text(mode));
+        }
+
+        public void Remove()
+        {
+            Removes++;
+            Exists = false;
+            Log.Add("移除");
+        }
+
+        public void Ping() => Pings++;
+
+        /// <summary>模擬虛擬螢幕被系統移除（睡眠喚醒、顯示卡驅動重置等）。</summary>
+        public void Vanish() => Exists = false;
+    }
+
+    static class Fake
+    {
+        public static string Text(VideoMode v) => v.Width + "x" + v.Height + "@" + v.RefreshRate;
     }
 
     /// <summary>建立假螢幕的捷徑。</summary>
@@ -204,18 +261,25 @@ namespace AutoDisplayMode.Core.Tests
         public FakeStartup Startup { get; } = new();
         public FakeNotifier Notifier { get; } = new();
         public FakeMonitors Monitors { get; }
+        public FakeVirtualDisplay Virtual { get; } = new();
         public AppCoordinator App { get; }
+
+        /// <summary>螢幕系統與虛擬螢幕共用的呼叫紀錄（依呼叫順序）。</summary>
+        public List<string> Log { get; } = new();
 
         /// <summary>預設接上一台開啟中的主螢幕。</summary>
         public static DetectedMonitor DefaultMonitor => Mon.On("SN0001", 0, 0, 1920, 1080, 60, primary: true);
 
-        public Harness(string? cfg = null, bool start = true, DetectedMonitor[]? monitors = null, bool startupEnabled = false)
+        public Harness(string? cfg = null, bool start = true, DetectedMonitor[]? monitors = null, bool startupEnabled = false,
+            Action<FakeVirtualDisplay>? virtualDisplay = null)
         {
             Signals = new FakeSignals(Clock);
             Store = new FakeStore(cfg);
-            Monitors = new FakeMonitors(monitors ?? new[] { DefaultMonitor });
+            Monitors = new FakeMonitors(monitors ?? new[] { DefaultMonitor }) { Log = Log };
+            Virtual.Log = Log;
+            virtualDisplay?.Invoke(Virtual);
             Startup.IsEnabled = startupEnabled;
-            App = new AppCoordinator(Store, Monitors, Signals, Clock, Startup, Notifier);
+            App = new AppCoordinator(Store, Monitors, Virtual, Signals, Clock, Startup, Notifier);
             Monitors.TargetName = () => App.SwitchTargetName;
             if (start) App.Start();
         }
@@ -251,14 +315,34 @@ namespace AutoDisplayMode.Core.Tests
 
         public static string Cfg(params string[] lines) => string.Join("\r\n", lines) + "\r\n";
 
-        /// <summary><see cref="Modes"/> 中的三個模式。</summary>
-        public const int Play = 1, Save = 2, AllOff = 3;
+        /// <summary><see cref="Modes"/> 中的三個模式；<see cref="WithRemote"/> 另有兩個潛行模式。</summary>
+        public const int Play = 1, Save = 2, AllOff = 3, Remote = 4, Remote4K = 5;
+
+        /// <summary>
+        /// <see cref="Modes"/> 再加上兩個潛行模式：「潛行」（4，1920x1080@60）與「潛行 4K」（5，3840x2160@60），
+        /// 各有一條目標為「遊玩」的內建切換條件，放在 <paramref name="extra"/> 的切換條件之後
+        /// （<paramref name="extra"/> 中已經有該潛行模式的 <see cref="BuiltIn"/> 時不另外加）。
+        /// </summary>
+        public static Harness WithRemote(int current, params string[] extra) =>
+            Modes(current, extra.Concat(new[] { Remote, Remote4K }.Where(id => !extra.Contains(BuiltIn(id, Play))).Select(id => BuiltIn(id, Play))).ToArray(),
+                RemoteMode(Remote, "潛行", 1920, 1080, 60) + RemoteMode(Remote4K, "潛行 4K", 3840, 2160, 60));
+
+        /// <summary>潛行模式的 [Mode.N] 分段。</summary>
+        public static string RemoteMode(int id, string name, int w, int h, int hz) => Cfg(
+            "[Mode." + id + "]", "Name=" + name, "Kind=Remote", "VirtualWidth=" + w, "VirtualHeight=" + h, "VirtualRefreshRate=" + hz);
+
+        /// <summary>內建切換條件（給 <see cref="Modes"/> 的 extra）。</summary>
+        public static string BuiltIn(int from, int to) =>
+            Cfg("From=" + from, "Condition=UsageDetected", "MouseKeyboard=1", "Audio=0", "To=" + to, "Forced=1", "BuiltIn=1");
 
         /// <summary>
         /// 三個模式「遊玩」（1，1920x1080）、「省電」（2，1280x720）、「全關」（3，800x600），各記錄預設螢幕為主螢幕。
         /// <paramref name="extra"/> 中以 <c>From=</c> 開頭的是切換條件（見 <see cref="Sw"/>，依出現順序編號），其餘放在 [General]。
+        /// <paramref name="moreModes"/> 接在三個模式之後。
         /// </summary>
-        public static Harness Modes(int current, params string[] extra)
+        public static Harness Modes(int current, params string[] extra) => Modes(current, extra, "");
+
+        static Harness Modes(int current, string[] extra, string moreModes)
         {
             static string Mode(int id, string name, int w, int h) => Cfg(
                 "[Mode." + id + "]", "Name=" + name,
@@ -279,7 +363,7 @@ namespace AutoDisplayMode.Core.Tests
 
             return new Harness(
                 Cfg(general.ToArray()) + conditions +
-                Mode(Play, "遊玩", 1920, 1080) + Mode(Save, "省電", 1280, 720) + Mode(AllOff, "全關", 800, 600));
+                Mode(Play, "遊玩", 1920, 1080) + Mode(Save, "省電", 1280, 720) + Mode(AllOff, "全關", 800, 600) + moreModes);
         }
 
         /// <summary>

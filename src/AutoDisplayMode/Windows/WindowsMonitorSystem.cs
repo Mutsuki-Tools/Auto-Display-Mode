@@ -79,13 +79,19 @@ namespace AutoDisplayMode.Windows
         public IReadOnlyList<DetectedMonitor> Detect() => DetectTargets(Query(QDC_ALL_PATHS).Paths).Select(t => t.Monitor).ToList();
 
         /// <summary>
-        /// 列出接上的每台螢幕與代表它的路徑（開啟中的路徑優先）。
+        /// 本程式的虛擬螢幕目前是否接上（出現在 Windows 的顯示設定中，不論是否開啟）。
+        /// 查詢失敗時丟出例外（不能當成不存在，否則會被誤判為虛擬螢幕意外消失）。
+        /// </summary>
+        public bool VirtualDisplayPresent() => Query(QDC_ALL_PATHS).Paths.Any(IsVirtualTarget);
+
+        /// <summary>
+        /// 列出接上的每台螢幕與代表它的路徑（開啟中的路徑優先），不含本程式的虛擬螢幕。
         /// QDC_ALL_PATHS 會列出每個「來源 × 螢幕」的可能組合，同一台螢幕只取一條。
         /// </summary>
         static List<(DetectedMonitor Monitor, DISPLAYCONFIG_PATH_INFO Path)> DetectTargets(DISPLAYCONFIG_PATH_INFO[] paths)
         {
             var targets = paths
-                .Where(p => p.targetInfo.targetAvailable != 0)
+                .Where(p => p.targetInfo.targetAvailable != 0 && !IsVirtualDisplayAdapter(p.targetInfo.adapterId))
                 .GroupBy(TargetKey)
                 .Select(g => g.OrderByDescending(IsActive).First());
 
@@ -115,10 +121,59 @@ namespace AutoDisplayMode.Windows
         static bool IsActive(DISPLAYCONFIG_PATH_INFO p) => (p.flags & DISPLAYCONFIG_PATH_ACTIVE) != 0;
 
         // ------------------------------------------------------------
+        //  虛擬螢幕的辨識
+        // ------------------------------------------------------------
+
+        /// <summary>介面卡是否為 SudoVDA（以 LUID 快取；LUID 在介面卡重新啟動後會換新的）。</summary>
+        static readonly System.Collections.Concurrent.ConcurrentDictionary<(uint, int), bool> virtualAdapters = new();
+
+        /// <summary>接上的本程式虛擬螢幕的路徑。</summary>
+        static bool IsVirtualTarget(DISPLAYCONFIG_PATH_INFO p) =>
+            p.targetInfo.targetAvailable != 0 && IsVirtualDisplayAdapter(p.targetInfo.adapterId);
+
+        /// <summary>
+        /// 介面卡是否為本程式的虛擬螢幕所在的 SudoVDA 介面卡：以介面卡的硬體 ID <c>Root\SudoMaker\SudoVDA</c> 辨識
+        /// （票 02；目標 ID 每次建立都會變，不能用）。其他軟體的虛擬顯示（Meta、Wacom、Parsec 等）照一般螢幕看待。
+        /// </summary>
+        static bool IsVirtualDisplayAdapter(LUID adapter)
+        {
+            var key = (adapter.LowPart, adapter.HighPart);
+            if (virtualAdapters.TryGetValue(key, out bool cached)) return cached;
+            bool? found = AdapterHasHardwareId(adapter, SudoVdaSetup.HardwareId);
+            if (found != null) virtualAdapters[key] = found.Value;   // 讀取失敗時不快取，下次再讀
+            return found == true;
+        }
+
+        /// <summary>介面卡的硬體 ID 是否包含 <paramref name="hardwareId"/>；讀不到時回傳 null。</summary>
+        static bool? AdapterHasHardwareId(LUID adapter, string hardwareId)
+        {
+            var name = new DISPLAYCONFIG_ADAPTER_NAME();
+            name.header.type = DISPLAYCONFIG_DEVICE_INFO_GET_ADAPTER_NAME;
+            name.header.size = (uint)Marshal.SizeOf(typeof(DISPLAYCONFIG_ADAPTER_NAME));
+            name.header.adapterId = adapter;
+            if (DisplayConfigGetDeviceInfo(ref name) != 0) return null;
+
+            // 介面卡的裝置路徑 \\?\ROOT#DISPLAY#0003#{介面 GUID} → 裝置執行個體 ID ROOT\DISPLAY\0003
+            string path = name.adapterDevicePath ?? "";
+            if (!path.StartsWith(@"\\?\", StringComparison.Ordinal)) return false;
+            path = path.Substring(4);
+            int brace = path.LastIndexOf("#{", StringComparison.Ordinal);
+            if (brace >= 0) path = path.Substring(0, brace);
+            if (CM_Locate_DevNode(out uint devInst, path.Replace('#', '\\'), 0) != 0) return null;
+
+            var buffer = new byte[2048];
+            uint length = (uint)buffer.Length;
+            if (CM_Get_DevNode_Registry_Property(devInst, CM_DRP_HARDWAREID, out _, buffer, ref length, 0) != 0) return null;
+            return Encoding.Unicode.GetString(buffer, 0, (int)length)
+                .Split(new[] { '\0' }, StringSplitOptions.RemoveEmptyEntries)
+                .Any(id => string.Equals(id, hardwareId, StringComparison.OrdinalIgnoreCase));
+        }
+
+        // ------------------------------------------------------------
         //  套用
         // ------------------------------------------------------------
 
-        public void BeginApply(IReadOnlyList<MonitorSettings> states)
+        public void BeginApply(IReadOnlyList<MonitorSettings> states, VideoMode? virtualMode)
         {
             MonitorSettings[] copy = states.ToArray();
             ThreadPool.QueueUserWorkItem(_ =>
@@ -126,7 +181,8 @@ namespace AutoDisplayMode.Windows
                 string? error = null;
                 try
                 {
-                    Apply(copy);
+                    if (virtualMode is VideoMode v) ApplyVirtualOnly(v);
+                    else Apply(copy);
                 }
                 catch (Exception ex)
                 {
@@ -137,12 +193,60 @@ namespace AutoDisplayMode.Windows
         }
 
         /// <summary>
-        /// 套用 <paramref name="states"/>。中途失敗且螢幕已被改動時，盡量還原為套用前的狀態
-        /// （同時蓋掉已暫存在登錄檔的設定），讓程式記錄的模式與實際狀態一致。
+        /// 潛行模式：等本程式的虛擬螢幕出現，關閉其他所有畫面、只開啟它，再設定解析度與更新率（59 與 60 視為相同）。
+        /// Windows 可能一建立就依記憶套用上次的配置（已經只開虛擬螢幕，或讓它維持關閉），不論哪種都明確套用。
+        /// 失敗時不還原（Windows 可能已自己改過配置），由協調者移除虛擬螢幕並重新套用原本的模式。
+        /// </summary>
+        static void ApplyVirtualOnly(VideoMode mode)
+        {
+            // 1. 等虛擬螢幕存在（不是等它被開啟）：建立後通常幾毫秒就出現
+            var watch = System.Diagnostics.Stopwatch.StartNew();
+            DISPLAYCONFIG_PATH_INFO[] paths;
+            DISPLAYCONFIG_MODE_INFO[] modes;
+            while (true)
+            {
+                (paths, modes) = Query(QDC_ALL_PATHS);
+                if (paths.Any(IsVirtualTarget)) break;
+                if (watch.ElapsedMilliseconds > 5000) throw new InvalidOperationException("虛擬螢幕建立後 5 秒內沒有出現在 Windows 的顯示設定中。");
+                Thread.Sleep(100);
+            }
+            var key = TargetKey(paths.Where(IsVirtualTarget).OrderByDescending(IsActive).First());
+
+            // 2. 只開虛擬螢幕
+            var wanted = new HashSet<(uint, int, uint)> { key };
+            if (!wanted.SetEquals(paths.Where(IsActive).Select(TargetKey)))
+                SetActiveTargets(paths, modes, wanted, new List<(DetectedMonitor Monitor, DISPLAYCONFIG_PATH_INFO Path)>());
+
+            // 3. 解析度與更新率
+            DISPLAYCONFIG_PATH_INFO? path = WaitForActive(wanted).Where(p => TargetKey(p).Equals(key)).Cast<DISPLAYCONFIG_PATH_INFO?>().FirstOrDefault();
+            string gdi = (path == null ? null : SourceGdiName(path.Value.sourceInfo)) ?? throw new InvalidOperationException("無法開啟虛擬螢幕");
+            var dm = NewDevMode();
+            if (EnumDisplaySettings(gdi, ENUM_CURRENT_SETTINGS, ref dm) && Unrotated(dm) is var current &&
+                current.Width == mode.Width && current.Height == mode.Height && VirtualDisplayModes.SameRefreshRate(current.RefreshRate, mode.RefreshRate))
+                return;
+
+            var s = new MonitorSettings { Name = "虛擬螢幕", Enabled = true, Width = mode.Width, Height = mode.Height, RefreshRate = mode.RefreshRate, Primary = true };
+            try
+            {
+                SetMode(gdi, s);
+            }
+            catch (InvalidOperationException) when (mode.RefreshRate is 59 or 60)
+            {
+                SetMode(gdi, s with { RefreshRate = mode.RefreshRate == 60 ? 59 : 60 });   // 驅動只有其中一個時
+            }
+            int r = ChangeDisplaySettingsEx(null, IntPtr.Zero, IntPtr.Zero, 0, IntPtr.Zero);
+            if (r != DISP_CHANGE_SUCCESSFUL) throw new InvalidOperationException("無法套用虛擬螢幕的顯示設定（" + DispChangeText(r) + "）");
+        }
+
+        /// <summary>
+        /// 套用 <paramref name="states"/>（本程式的虛擬螢幕若開著會被關閉）。中途失敗且螢幕已被改動時，盡量還原為套用前的狀態
+        /// （同時蓋掉已暫存在登錄檔的設定；原本開著的虛擬螢幕也重新開啟），讓程式記錄的模式與實際狀態一致。
         /// </summary>
         static void Apply(MonitorSettings[] states)
         {
-            MonitorSettings[] before = Snapshot(DetectTargets(Query(QDC_ALL_PATHS).Paths));
+            var (paths, _) = Query(QDC_ALL_PATHS);
+            MonitorSettings[] before = Snapshot(DetectTargets(paths));
+            bool virtualWasActive = paths.Any(p => IsActive(p) && IsVirtualTarget(p));
             bool changed = false;
             try
             {
@@ -154,7 +258,7 @@ namespace AutoDisplayMode.Windows
                 try
                 {
                     bool ignored = false;
-                    ApplyCore(before, ref ignored);
+                    ApplyCore(before, ref ignored, keepVirtual: virtualWasActive);
                     note = "已還原為切換前的螢幕狀態。";
                 }
                 catch (Exception rollback)
@@ -165,8 +269,11 @@ namespace AutoDisplayMode.Windows
             }
         }
 
-        /// <summary><paramref name="changed"/>：是否已改動螢幕（開關，或已暫存任何一台的顯示設定）。</summary>
-        static void ApplyCore(MonitorSettings[] states, ref bool changed)
+        /// <summary>
+        /// <paramref name="changed"/>：是否已改動螢幕（開關，或已暫存任何一台的顯示設定）。
+        /// <paramref name="keepVirtual"/>：本程式的虛擬螢幕開著的話維持開啟（還原潛行模式時）；否則關閉。
+        /// </summary>
+        static void ApplyCore(MonitorSettings[] states, ref bool changed, bool keepVirtual = false)
         {
             // 1. 開關：開啟中的螢幕與要求的不同時，以 SetDisplayConfig 調整
             var (paths, modes) = Query(QDC_ALL_PATHS);
@@ -174,6 +281,9 @@ namespace AutoDisplayMode.Windows
             var wanted = new HashSet<(uint, int, uint)>();
             foreach (MonitorSettings s in states.Where(s => s.Enabled))
                 wanted.Add(TargetKey(FindTarget(targets, s).Path));
+            if (keepVirtual)
+                foreach (DISPLAYCONFIG_PATH_INFO p in paths.Where(p => IsActive(p) && IsVirtualTarget(p)))
+                    wanted.Add(TargetKey(p));
             var active = new HashSet<(uint, int, uint)>(paths.Where(IsActive).Select(TargetKey));
             if (!wanted.SetEquals(active))
             {
@@ -273,7 +383,7 @@ namespace AutoDisplayMode.Windows
                     .FirstOrDefault();
                 if (free == null)
                 {
-                    string name = targets.FirstOrDefault(t => TargetKey(t.Path).Equals(key)).Monitor?.Name ?? "";
+                    string name = targets.FirstOrDefault(t => TargetKey(t.Path).Equals(key)).Monitor?.Name ?? "虛擬螢幕";
                     throw new InvalidOperationException("沒有可用的顯示來源可以開啟「" + name + "」（顯示卡同時輸出的螢幕數量已達上限？）");
                 }
                 var p = free.Value;
@@ -284,8 +394,9 @@ namespace AutoDisplayMode.Windows
                 usedSources.Add(SourceKey(p));
             }
 
-            DISPLAYCONFIG_MODE_INFO[] modeArray = resultModes.ToArray();
-            int err = SetDisplayConfig((uint)result.Count, result.ToArray(), (uint)modeArray.Length, modeArray,
+            // 沒有任何模式（例如只開剛建立的虛擬螢幕）時要傳 NULL，傳空陣列會得到 ERROR_INVALID_PARAMETER
+            DISPLAYCONFIG_MODE_INFO[]? modeArray = resultModes.Count == 0 ? null : resultModes.ToArray();
+            int err = SetDisplayConfig((uint)result.Count, result.ToArray(), (uint)resultModes.Count, modeArray,
                 SDC_APPLY | SDC_USE_SUPPLIED_DISPLAY_CONFIG | SDC_ALLOW_CHANGES | SDC_SAVE_TO_DATABASE);
             if (err != 0) throw new InvalidOperationException("無法開關螢幕：" + new Win32Exception(err).Message + "（" + err + "）");
         }
@@ -610,6 +721,8 @@ namespace AutoDisplayMode.Windows
         const int DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME = 1;
         const int DISPLAYCONFIG_DEVICE_INFO_GET_TARGET_NAME = 2;
         const int DISPLAYCONFIG_DEVICE_INFO_GET_TARGET_PREFERRED_MODE = 3;
+        const int DISPLAYCONFIG_DEVICE_INFO_GET_ADAPTER_NAME = 4;
+        const uint CM_DRP_HARDWAREID = 0x2;
         const int ENUM_CURRENT_SETTINGS = -1;
         const uint DMDO_90 = 1;
         const uint DMDO_180 = 2;
@@ -727,6 +840,13 @@ namespace AutoDisplayMode.Windows
             [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string viewGdiDeviceName;
         }
 
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        struct DISPLAYCONFIG_ADAPTER_NAME
+        {
+            public DISPLAYCONFIG_DEVICE_INFO_HEADER header;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)] public string adapterDevicePath;
+        }
+
         [StructLayout(LayoutKind.Sequential)]
         struct DISPLAYCONFIG_TARGET_PREFERRED_MODE
         {
@@ -780,7 +900,7 @@ namespace AutoDisplayMode.Windows
 
         [DllImport("user32.dll")]
         static extern int SetDisplayConfig(uint numPathArrayElements, [In] DISPLAYCONFIG_PATH_INFO[] pathArray,
-            uint numModeInfoArrayElements, [In] DISPLAYCONFIG_MODE_INFO[] modeInfoArray, uint flags);
+            uint numModeInfoArrayElements, [In] DISPLAYCONFIG_MODE_INFO[]? modeInfoArray, uint flags);
 
         [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "ChangeDisplaySettingsExW")]
         static extern int ChangeDisplaySettingsEx(string deviceName, ref DEVMODE devMode, IntPtr hwnd, uint flags, IntPtr lParam);
@@ -796,6 +916,15 @@ namespace AutoDisplayMode.Windows
 
         [DllImport("user32.dll")]
         static extern int DisplayConfigGetDeviceInfo(ref DISPLAYCONFIG_TARGET_PREFERRED_MODE requestPacket);
+
+        [DllImport("user32.dll")]
+        static extern int DisplayConfigGetDeviceInfo(ref DISPLAYCONFIG_ADAPTER_NAME requestPacket);
+
+        [DllImport("cfgmgr32.dll", CharSet = CharSet.Unicode, EntryPoint = "CM_Locate_DevNodeW")]
+        static extern uint CM_Locate_DevNode(out uint devInst, string deviceId, uint flags);
+
+        [DllImport("cfgmgr32.dll", CharSet = CharSet.Unicode, EntryPoint = "CM_Get_DevNode_Registry_PropertyW")]
+        static extern uint CM_Get_DevNode_Registry_Property(uint devInst, uint property, out uint type, byte[] buffer, ref uint length, uint flags);
 
         [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "EnumDisplaySettingsW")]
         static extern bool EnumDisplaySettings(string deviceName, int modeNum, ref DEVMODE devMode);

@@ -20,6 +20,7 @@ namespace AutoDisplayMode
         readonly AppCoordinator app;
         readonly WindowsUsageSignals signals;
         readonly WindowsMonitorSystem monitors;
+        readonly SudoVdaVirtualDisplay virtualDisplay;
         readonly SudoVdaDriverInstaller driver = new(SudoVdaDriverInstaller.DefaultPackageFolder());
         readonly NotifyIcon tray;
         readonly ContextMenuStrip menu;
@@ -46,10 +47,11 @@ namespace AutoDisplayMode
             var clock = new StopwatchClock();
             signals = new WindowsUsageSignals(clock);
             monitors = new WindowsMonitorSystem(ui);
+            virtualDisplay = new SudoVdaVirtualDisplay(monitors.VirtualDisplayPresent);
             string dir = Path.GetDirectoryName(Application.ExecutablePath)!;
             app = new AppCoordinator(
                 new FileConfigStore(Path.Combine(dir, "AutoDisplayMode.cfg")),
-                monitors, signals, clock, new RegistryStartup(), new BalloonNotifier(tray, AppTitle));
+                monitors, virtualDisplay, signals, clock, new RegistryStartup(), new BalloonNotifier(tray, AppTitle));
             monitors.ApplyFinished += app.OnSwitchFinished;
 
             // ---- 右鍵選單 ----
@@ -170,11 +172,14 @@ namespace AutoDisplayMode
             string modeName = app.CurrentModeName;
             string? target = app.SwitchTargetName;
 
-            miStatus.Text = "目前：" + modeName + (target != null ? "（正在切換到「" + target + "」…）" : "");
+            miStatus.Text = "目前：" + modeName + (app.InRemoteMode ? "（潛行模式）" : "") + (target != null ? "（正在切換到「" + target + "」…）" : "");
             UpdateModeItems();
             miAuto.Checked = cfg.AutoSwitch;
-            miCapture.Text = "將目前螢幕狀態存入「" + modeName.Replace("&", "&&") + "」…";
-            miCapture.Enabled = !app.IsSwitching && !app.SettingsWindowOpen;   // 設定視窗開著時，擷取會被視窗的副本蓋掉
+            // 處於潛行模式時所有螢幕都關閉：停用擷取並在選單上說明原因
+            miCapture.Text = app.InRemoteMode
+                ? "無法擷取：處於潛行模式（所有螢幕都關閉）"
+                : "將目前螢幕狀態存入「" + modeName.Replace("&", "&&") + "」…";
+            miCapture.Enabled = app.CaptureBlocker == null && !app.SettingsWindowOpen;   // 設定視窗開著時，擷取會被視窗的副本蓋掉
             miReload.Enabled = !app.SettingsWindowOpen;                        // 避免與設定視窗互相覆蓋
 
             tray.Icon = IconFor(cfg.CurrentModeConfig?.Color ?? ModeConfig.Palette[0], cfg.AutoSwitch);
@@ -199,7 +204,7 @@ namespace AutoDisplayMode
             foreach (ModeConfig mode in cfg.Modes)
             {
                 int id = mode.Id;
-                string text = mode.Name.Replace("&", "&&");
+                string text = mode.Name.Replace("&", "&&") + (mode.IsRemote ? "（潛行）" : "");
                 if (id == app.SwitchTargetId) text += "（切換中…）";
                 var item = new ToolStripMenuItem(text, ColorSwatch(mode.Color, swatchSize), delegate { app.ManualSwitch(id); })
                 {
@@ -223,13 +228,16 @@ namespace AutoDisplayMode
                 "依你是否正在使用電腦，在多組螢幕配置之間自動或手動切換。\n" +
                 "・模式：一組有名稱的螢幕設定（每台螢幕的開關、位置、解析度等），例如「遊玩」「省電」。\n" +
                 "・切換條件：處於某個模式時，閒置一段時間或偵測到使用，就切換到另一個模式。勾選「強制」的切換條件即使自動切換關閉、設定視窗開著，也照樣生效。\n" +
-                "・目前模式：" + name + "　自動切換：" + OnOff(cfg.AutoSwitch) + "\n\n" +
+                "・潛行模式：所有螢幕關閉、只開一個虛擬螢幕給遠端連線軟體（例如 Chrome 遠端桌面）使用，電腦照常運作，也省下螢幕的電。" +
+                "回到電腦前動一下實體鍵盤滑鼠，就依它的內建切換條件回到一般模式（遠端操作不算）。「潛行」不是防窺。\n" +
+                "・復原模式：最後一個處於過的一般模式。程式啟動時目前模式是潛行模式，或虛擬螢幕意外消失時，會切回復原模式。\n" +
+                "・目前模式：" + name + (app.InRemoteMode ? "（潛行模式）" : "") + "　自動切換：" + OnOff(cfg.AutoSwitch) + "\n\n" +
                 "【右鍵選單】\n" +
                 "・最上方的「目前：…」顯示目前模式（切換中時顯示正在切換到哪個模式）。\n" +
-                "・模式清單：目前模式打勾，點一下即手動切換到該模式。\n" +
+                "・模式清單：目前模式打勾，點一下即手動切換到該模式。潛行模式標示「（潛行）」；虛擬螢幕驅動沒有安裝時無法切換到潛行模式。\n" +
                 "・自動切換：開關依切換條件自動切換。關閉時只有勾選「強制」的切換條件照樣生效。\n" +
                 "・設定…：開啟設定視窗（雙擊工作列圖示也可以），管理模式、螢幕配置、切換條件與一般設定。各分頁的用法按設定視窗左下角的「說明」或 F1。\n" +
-                "・將目前螢幕狀態存入「" + name + "」…：把目前每台螢幕的狀態存進目前模式，並重新開始計時（設定視窗開著時無法使用）。\n" +
+                "・將目前螢幕狀態存入「" + name + "」…：把目前每台螢幕的狀態存進目前模式，並重新開始計時（設定視窗開著時、處於潛行模式時無法使用）。\n" +
                 "・用記事本開啟 cfg：直接編輯設定檔；存檔後選「重新載入 cfg」即生效（設定視窗開著時無法重新載入）。\n" +
                 "・說明：顯示這段說明。\n" +
                 "・關閉程式：結束常駐。\n\n" +
@@ -248,6 +256,7 @@ namespace AutoDisplayMode
             timer.Stop();
             signals.Dispose();
             monitors.Dispose();
+            virtualDisplay.Dispose();   // 不再送心跳：處於潛行模式時驅動約 3 秒後移除虛擬螢幕，Windows 再點亮實體螢幕（票 04 改成先切回復原模式）
             tray.Visible = false;
             tray.Dispose();
             ExitThread();

@@ -20,6 +20,8 @@ namespace AutoDisplayMode.Settings
         readonly AppCoordinator app;
         readonly ComboBox modeChoice;
         readonly LayoutCanvas canvas;
+        readonly Label remoteNote;   // 選到潛行模式時取代畫布的說明
+        readonly Panel details;
         readonly Label monitorName;
         readonly CheckBox enabled;
         readonly CheckBox primary;
@@ -76,10 +78,21 @@ namespace AutoDisplayMode.Settings
             top.Controls.Add(new Label { Text = "要編輯的模式：", AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(0, 0, 3, 0) });
             top.Controls.Add(modeChoice);
 
-            // ---- 左邊：畫布 ----
-            canvas = new LayoutCanvas { Dock = DockStyle.Fill, Margin = new Padding(0, 0, 12, 0) };
+            // ---- 左邊：畫布（選到潛行模式時換成說明） ----
+            canvas = new LayoutCanvas { Dock = DockStyle.Fill };
             canvas.SelectionChanged += ShowSelected;
             canvas.Moved += OnCanvasMoved;
+            remoteNote = new Label
+            {
+                Dock = DockStyle.Fill,
+                Visible = false,
+                Padding = new Padding(12),
+                BackColor = SystemColors.Window,
+                BorderStyle = BorderStyle.FixedSingle,
+            };
+            var canvasHost = new Panel { Dock = DockStyle.Fill, Margin = new Padding(0, 0, 12, 0) };
+            canvasHost.Controls.Add(canvas);
+            canvasHost.Controls.Add(remoteNote);
 
             // ---- 右邊：選取的螢幕 ----
             monitorName = BoldLabel("", new Padding(3, 0, 3, 6));
@@ -219,8 +232,9 @@ namespace AutoDisplayMode.Settings
                 root.SetColumnSpan(c, 2);
             }
             Span(top, 0);
-            root.Controls.Add(canvas, 0, 1);
+            root.Controls.Add(canvasHost, 0, 1);
             root.Controls.Add(details, 1, 1);
+            this.details = details;
             root.Controls.Add(disconnectedSection, 0, 2);
             root.Controls.Add(disconnectedButtons, 1, 2);
             Span(detectError, 3);
@@ -266,7 +280,11 @@ namespace AutoDisplayMode.Settings
             "・未接上的螢幕與其他螢幕重疊時，清單標出【重疊】，要刪除或對應後才能套用。\n\n" +
             "【預覽套用】\n" +
             "・立即套用這個模式編輯中的螢幕設定，15 秒內沒有按「保留變更」就還原。\n" +
-            "・預覽不改變目前模式；保留後仍要按「套用」或「套用並關閉」才會存檔。";
+            "・預覽不改變目前模式；保留後仍要按「套用」或「套用並關閉」才會存檔。\n" +
+            "・處於潛行模式時無法預覽（所有螢幕都關閉了）。\n\n" +
+            "【潛行模式】\n" +
+            "・潛行模式的所有螢幕一律關閉，只開啟虛擬螢幕，所以選到潛行模式時不顯示畫布，改顯示說明。虛擬螢幕的解析度與更新率在「模式」分頁設定。\n" +
+            "・虛擬螢幕不是螢幕：不出現在畫布與擷取中。電腦上其他軟體建立的虛擬顯示畫面照一般螢幕顯示。";
 
         protected override void OnLoad(AppConfig d)
         {
@@ -275,7 +293,7 @@ namespace AutoDisplayMode.Settings
             ModeConfig? keep = SelectedMode ?? d.FindMode(app.Config.CurrentModeId);
             modeChoice.BeginUpdate();
             modeChoice.Items.Clear();
-            foreach (ModeConfig m in d.Modes) modeChoice.Items.Add(new ModeItem(m, DisplayName(m)));
+            foreach (ModeConfig m in d.Modes) modeChoice.Items.Add(new ModeItem(m, DisplayName(m) + (m.IsRemote ? "（潛行）" : "")));
             int index = keep == null ? -1 : d.Modes.IndexOf(keep);
             modeChoice.SelectedIndex = index >= 0 ? index : (d.Modes.Count > 0 ? 0 : -1);
             modeChoice.EndUpdate();
@@ -318,6 +336,20 @@ namespace AutoDisplayMode.Settings
         void RefreshAll()
         {
             ModeConfig? mode = SelectedMode;
+            bool remote = mode?.IsRemote == true;
+            remoteNote.Visible = remote;
+            canvas.Visible = details.Visible = !remote;
+            previewButton.Enabled = !remote && !app.IsSwitching;
+            if (remote)
+            {
+                VideoMode v = mode!.VirtualMode;
+                remoteNote.Text = "「" + DisplayName(mode) + "」是潛行模式：所有螢幕一律關閉，只開啟虛擬螢幕（" +
+                                  v.Width + " × " + v.Height + "、" + v.RefreshRate + " Hz），所以沒有螢幕配置可以設定。\n\n" +
+                                  "虛擬螢幕的解析度與更新率在「模式」分頁設定。";
+                disconnectedSection.Visible = disconnectedButtons.Visible = false;
+                errors.Visible = warnings.Visible = false;
+                return;
+            }
             List<LayoutCanvas.Item> items = mode == null
                 ? new List<LayoutCanvas.Item>()
                 : detected.Select(d => new LayoutCanvas.Item(d.Id, MonitorLabel(d), mode.SettingsFor(d), !mode.Records(d.Id))).ToList();
@@ -545,7 +577,7 @@ namespace AutoDisplayMode.Settings
         void OnAppChanged()
         {
             if (IsDisposed) return;
-            previewButton.Enabled = !app.IsSwitching;
+            previewButton.Enabled = !app.IsSwitching && SelectedMode?.IsRemote != true;
             if (previewing && !app.IsSwitching && !app.PreviewAwaitingConfirm) previewing = false;   // 預覽失敗（協調者已通知）
         }
 

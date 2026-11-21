@@ -79,7 +79,7 @@ namespace AutoDisplayMode.Core
         public static ParseResult Parse(string text)
         {
             var c = new AppConfig();
-            int? currentModeId = null;
+            int? currentModeId = null, restoreModeId = null;
             var conditions = new List<(int Number, SwitchCondition Condition, string? ReadError)>();
             LegacySwitch? legacy = null;
             bool obsolete = false;
@@ -88,7 +88,7 @@ namespace AutoDisplayMode.Core
             {
                 if (Is(name, GeneralSection))
                 {
-                    foreach (var (key, val) in values) ReadGeneralKey(c, key, val, ref currentModeId);
+                    foreach (var (key, val) in values) ReadGeneralKey(c, key, val, ref currentModeId, ref restoreModeId);
                 }
                 else if (Is(name, LegacySection))
                 {
@@ -109,7 +109,8 @@ namespace AutoDisplayMode.Core
                 {
                     ModeConfig? mode = c.Modes.Find(m => m.Id == modeId);
                     MonitorSettings? monitor = ReadMonitor(values);
-                    if (mode != null && monitor != null && !mode.Monitors.Exists(m => m.Id == monitor.Id))
+                    // 潛行模式沒有螢幕設定（所有螢幕一律關閉）：手動加入的忽略
+                    if (mode != null && !mode.IsRemote && monitor != null && !mode.Monitors.Exists(m => m.Id == monitor.Id))
                         mode.Monitors.Add(monitor);
                 }
                 else if (TryParseModeSection(name, out modeId))
@@ -122,12 +123,17 @@ namespace AutoDisplayMode.Core
             c.CurrentModeId = currentModeId is int id && c.Modes.Exists(m => m.Id == id)
                 ? id
                 : c.Modes.FirstOrDefault()?.Id ?? 0;
+            // 復原模式不存在或不是一般模式時：目前模式是一般模式就用它，否則用順序第一個一般模式
+            c.RestoreModeId = restoreModeId is int r && c.FindMode(r) is { IsRemote: false }
+                ? r
+                : (c.CurrentModeConfig is { IsRemote: false } current ? current : c.FirstNormalMode)?.Id ?? 0;
             Normalize(c);
 
             var note = new StringBuilder();
             foreach (var (number, condition, readError) in conditions.OrderBy(x => x.Number))
             {
-                string? invalid = readError ?? condition.Validate(c);
+                // 內建切換條件不在這裡略過：由 AppConfig.RepairBuiltInConditions 修正（協調者先補上一般模式）
+                string? invalid = readError ?? (condition.BuiltIn ? null : condition.Validate(c));
                 if (invalid == null) c.SwitchConditions.Add(condition);
                 else note.Append("已略過無效的切換條件 [" + SwitchPrefix + Int(number) + "]：" + invalid + "。\n");
             }
@@ -217,6 +223,7 @@ namespace AutoDisplayMode.Core
                     case "mousekeyboard": mouseKeyboard = ParseBool(val, mouseKeyboard); break;
                     case "audio": audio = ParseBool(val, audio); break;
                     case "forced": s = s with { Forced = ParseBool(val, s.Forced) }; break;
+                    case "builtin": s = s with { BuiltIn = ParseBool(val, s.BuiltIn) }; break;
                 }
             }
             s = s with
@@ -227,13 +234,16 @@ namespace AutoDisplayMode.Core
             return s.Kind == SwitchConditionKind.UsageDetected ? s with { IdleAmount = new SwitchCondition().IdleAmount, IdleUnit = default } : s;
         }
 
-        static void ReadGeneralKey(AppConfig c, string key, string val, ref int? currentModeId)
+        static void ReadGeneralKey(AppConfig c, string key, string val, ref int? currentModeId, ref int? restoreModeId)
         {
             switch (key)
             {
                 case "autoswitch": c.AutoSwitch = ParseBool(val, c.AutoSwitch); break;
                 case "currentmode":
                     if (int.TryParse(val, NumberStyles.Integer, CultureInfo.InvariantCulture, out int id)) currentModeId = id;
+                    break;
+                case "restoremode":
+                    if (int.TryParse(val, NumberStyles.Integer, CultureInfo.InvariantCulture, out int restore)) restoreModeId = restore;
                     break;
                 case "mousemovethreshold": c.MouseMoveThreshold = ParseInt(val, c.MouseMoveThreshold); break;
                 case "audiothreshold": c.AudioThreshold = ParseDouble(val, c.AudioThreshold); break;
@@ -247,6 +257,8 @@ namespace AutoDisplayMode.Core
         static ModeConfig ReadMode(int id, List<(string Key, string Value)> values)
         {
             var mode = new ModeConfig(id, "模式 " + id);
+            VideoMode v = VirtualDisplayModes.Default;
+            int width = v.Width, height = v.Height, rate = v.RefreshRate;
             foreach (var (key, val) in values)
             {
                 switch (key)
@@ -254,10 +266,21 @@ namespace AutoDisplayMode.Core
                     case "name":
                         if (val.Trim().Length > 0) mode.Name = val.Trim();
                         break;
+                    case "kind": mode.Kind = ParseEnum(val, mode.Kind); break;
                     case "color": mode.Color = ParseColor(val, mode.Color); break;
                     case "manualautoswitch": mode.ManualAutoSwitch = ParseEnum(val, mode.ManualAutoSwitch); break;
                     case "unlistedmonitors": mode.UnlistedMonitors = ParseEnum(val, mode.UnlistedMonitors); break;
+                    case "virtualwidth": width = ParseInt(val, -1); break;
+                    case "virtualheight": height = ParseInt(val, -1); break;
+                    case "virtualrefreshrate": rate = ParseInt(val, -1); break;
                 }
+            }
+            if (mode.IsRemote)
+            {
+                // 解析度或更新率無效時用預設值（寬高一起換，避免拼出不存在的解析度）
+                bool size = width > 0 && height > 0 && width <= 16384 && height <= 16384;
+                mode.VirtualMode = new VideoMode(size ? width : v.Width, size ? height : v.Height, rate > 0 && rate <= 1000 ? rate : v.RefreshRate);
+                mode.UnlistedMonitors = default;
             }
             return mode;
         }
@@ -377,6 +400,9 @@ namespace AutoDisplayMode.Core
             Line("AutoSwitch=" + Bool(c.AutoSwitch));
             Line("# 目前模式（填下方某個 [Mode.N] 的 N）");
             Line("CurrentMode=" + Int(c.CurrentModeId));
+            Line("# 復原模式（填某個一般模式的 N）：最後一個處於過的一般模式，由程式自動更新。");
+            Line("# 程式啟動時目前模式是潛行模式、虛擬螢幕意外消失時，改套用這個模式；不存在時用順序第一個一般模式");
+            Line("RestoreMode=" + Int(c.RestoreModeId));
             Line("# 滑鼠要移動超過幾個像素才算使用（1~1000，過濾桌面震動造成的微小位移）");
             Line("MouseMoveThreshold=" + Int(c.MouseMoveThreshold));
             Line("# 聲音峰值超過多少（0~1）才算有聲音");
@@ -403,7 +429,10 @@ namespace AutoDisplayMode.Core
             Line("#   Audio          使用來源「聲音」（1=選，0=不選；聲音要持續 AudioSeconds 秒才算使用）");
             Line("#   To             目標模式（填 [Mode.N] 的 N，不可與來源模式相同）");
             Line("#   Forced         強制（1=是，0=否；沒寫時為 0）：即使自動切換關閉、設定視窗開著，這條也照樣生效");
+            Line("#   BuiltIn        內建切換條件（1=是；只有內建切換條件才寫）");
             Line("# 閒置：所選的使用來源全部都沒有使用，持續 IdleTime。偵測到使用：所選的使用來源任一個出現使用就成立。");
+            Line("# 內建切換條件：每個潛行模式剛好一條，From 是該潛行模式，Condition=UsageDetected、MouseKeyboard=1、Audio=0、Forced=1 固定，");
+            Line("#   To 必須是一般模式，只認實體鍵盤滑鼠（不受 IgnoreRemoteInput 影響）。不符時程式讀取時會修正並提示。");
             Line("# 例：");
             Line("#   [Switch.1]");
             Line("#   From=1");
@@ -432,6 +461,7 @@ namespace AutoDisplayMode.Core
                 Line("Audio=" + Bool(s.Uses(UsageSources.Audio)));
                 Line("To=" + Int(s.ToModeId));
                 Line("Forced=" + Bool(s.Forced));
+                if (s.BuiltIn) Line("BuiltIn=1");
             }
 
             if (c.Modes.Count > 0)
@@ -441,10 +471,13 @@ namespace AutoDisplayMode.Core
                 Line("#  模式與螢幕設定");
                 Line("#  [Mode.N] 是一個模式，N 為模式的編號，依模式的順序（改名不變；在設定視窗調整順序或刪除模式並套用後重新編號）：");
                 Line("#    Name              模式名稱");
+                Line("#    Kind              Normal（一般模式）或 Remote（潛行模式：所有螢幕關閉，只開啟虛擬螢幕）；建立後不能改");
                 Line("#    Color             工作列圖示顏色（#RRGGBB）");
                 Line("#    ManualAutoSwitch  手動切換進入此模式時，自動切換要 Keep（維持）、On（開啟）或 Off（關閉）");
-                Line("#    UnlistedMonitors  套用此模式時，接上但下方沒有記錄的螢幕要 Keep（維持現狀）或 Off（關閉）");
-                Line("#  [Mode.N.Monitor.K] 是模式 N 中一台螢幕的螢幕設定，K 只是順序：");
+                Line("#    UnlistedMonitors  （一般模式）套用此模式時，接上但下方沒有記錄的螢幕要 Keep（維持現狀）或 Off（關閉）");
+                Line("#    VirtualWidth, VirtualHeight, VirtualRefreshRate  （潛行模式）虛擬螢幕的解析度與更新率");
+                Line("#  潛行模式沒有 UnlistedMonitors 與螢幕設定；每個潛行模式在上方有一條內建切換條件（BuiltIn=1）。");
+                Line("#  [Mode.N.Monitor.K] 是一般模式 N 中一台螢幕的螢幕設定，K 只是順序：");
                 Line("#    Monitor      螢幕識別：廠牌/型號/SN:序號（讀不到序號時為 廠牌/型號/PORT:接孔）");
                 Line("#    Name         螢幕名稱（僅供辨識）");
                 Line("#    Enabled      開啟（1）或關閉（0）");
@@ -460,11 +493,19 @@ namespace AutoDisplayMode.Core
             {
                 string modeName = SingleLine(mode.Name);
                 Line();
-                Title("模式「" + modeName + "」");
+                Title((mode.IsRemote ? "潛行模式「" : "模式「") + modeName + "」");
                 Line("[" + ModePrefix + Int(mode.Id) + "]");
                 Line("Name=" + modeName);
+                Line("Kind=" + mode.Kind);
                 Line("Color=" + FormatColor(mode.Color));
                 Line("ManualAutoSwitch=" + mode.ManualAutoSwitch);
+                if (mode.IsRemote)
+                {
+                    Line("VirtualWidth=" + Int(mode.VirtualMode.Width));
+                    Line("VirtualHeight=" + Int(mode.VirtualMode.Height));
+                    Line("VirtualRefreshRate=" + Int(mode.VirtualMode.RefreshRate));
+                    continue;   // 潛行模式沒有螢幕設定
+                }
                 Line("UnlistedMonitors=" + mode.UnlistedMonitors);
 
                 int k = 0;

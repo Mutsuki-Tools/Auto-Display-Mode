@@ -55,6 +55,29 @@ namespace AutoDisplayMode.Core
             return new ApplyPlan(states, null);
         }
 
+        /// <summary>
+        /// 開啟所有接上的螢幕（復原模式的最後備案）：依偵測順序由左到右排成一列、上緣對齊，第一台是主螢幕，
+        /// 解析度用目前的（關閉中的用原生解析度），方向一律橫向。沒有接上任何螢幕時回傳 null。
+        /// </summary>
+        public static IReadOnlyList<MonitorSettings>? AllOn(IReadOnlyList<DetectedMonitor> detected)
+        {
+            if (detected.Count == 0) return null;
+            var states = new List<MonitorSettings>();
+            int x = 0;
+            foreach (DetectedMonitor d in detected)
+            {
+                VideoMode mode = (d.IsActive ? d.Current : null) ?? d.Native ?? d.SupportedModes.FirstOrDefault() ?? new VideoMode(1920, 1080, 60);
+                states.Add(new MonitorSettings
+                {
+                    Id = d.Id, Name = d.Name, Enabled = true, X = x, Y = 0,
+                    Width = mode.Width, Height = mode.Height, RefreshRate = mode.RefreshRate,
+                    Orientation = Orientation.Landscape, Primary = states.Count == 0,
+                });
+                x += mode.Width;
+            }
+            return states;
+        }
+
         /// <summary>接上但模式沒有記錄的螢幕，套用時的狀態。</summary>
         internal static MonitorSettings Unlisted(DetectedMonitor d, UnlistedMonitors policy)
         {

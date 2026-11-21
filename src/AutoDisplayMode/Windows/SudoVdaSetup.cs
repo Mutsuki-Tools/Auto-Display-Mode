@@ -175,15 +175,35 @@ namespace AutoDisplayMode.Windows
             }
         }
 
-        static bool HasInterface()
+        static bool HasInterface() => InterfacePath() != null;
+
+        /// <summary>
+        /// SudoVDA 的裝置介面路徑（以 CreateFile 開啟後送 IOCTL，見 <see cref="SudoVdaVirtualDisplay"/>）；
+        /// 驅動沒有安裝或沒有啟動時為 null。很快（不掃描驅動存放區），可在 UI 執行緒呼叫。
+        /// </summary>
+        public static string? InterfacePath()
         {
             Guid guid = InterfaceGuid;
             IntPtr set = SetupDiGetClassDevs(ref guid, null, IntPtr.Zero, DIGCF_PRESENT | DIGCF_DEVICEINTERFACE);
-            if (set == INVALID_HANDLE) return false;
+            if (set == INVALID_HANDLE) return null;
             try
             {
                 var data = new SP_DEVICE_INTERFACE_DATA { cbSize = Marshal.SizeOf(typeof(SP_DEVICE_INTERFACE_DATA)) };
-                return SetupDiEnumDeviceInterfaces(set, IntPtr.Zero, ref guid, 0, ref data);
+                if (!SetupDiEnumDeviceInterfaces(set, IntPtr.Zero, ref guid, 0, ref data)) return null;
+                SetupDiGetDeviceInterfaceDetail(set, ref data, IntPtr.Zero, 0, out int needed, IntPtr.Zero);
+                if (needed <= 0) return null;
+                IntPtr detail = Marshal.AllocHGlobal(needed);
+                try
+                {
+                    // SP_DEVICE_INTERFACE_DETAIL_DATA_W 的 cbSize：64 位元為 8，32 位元為 6
+                    Marshal.WriteInt32(detail, IntPtr.Size == 8 ? 8 : 6);
+                    if (!SetupDiGetDeviceInterfaceDetail(set, ref data, detail, needed, out _, IntPtr.Zero)) return null;
+                    return Marshal.PtrToStringUni(detail + 4);
+                }
+                finally
+                {
+                    Marshal.FreeHGlobal(detail);
+                }
             }
             finally
             {
@@ -443,6 +463,9 @@ namespace AutoDisplayMode.Windows
 
         [DllImport("setupapi.dll", SetLastError = true)]
         static extern bool SetupDiEnumDeviceInterfaces(IntPtr set, IntPtr info, ref Guid guid, uint index, ref SP_DEVICE_INTERFACE_DATA data);
+
+        [DllImport("setupapi.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        static extern bool SetupDiGetDeviceInterfaceDetail(IntPtr set, ref SP_DEVICE_INTERFACE_DATA data, IntPtr detail, int size, out int required, IntPtr info);
 
         [DllImport("setupapi.dll", CharSet = CharSet.Unicode, SetLastError = true)]
         static extern bool SetupDiGetDeviceRegistryProperty(IntPtr set, ref SP_DEVINFO_DATA info, uint property, out uint type, byte[] buffer, int size, out int required);

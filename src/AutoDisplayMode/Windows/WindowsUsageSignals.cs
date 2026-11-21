@@ -5,7 +5,10 @@ using AutoDisplayMode.Core;
 
 namespace AutoDisplayMode.Windows
 {
-    /// <summary>使用訊號的 Windows 實作：低階滑鼠與鍵盤鉤子、GetLastInputInfo、Core Audio 峰值。</summary>
+    /// <summary>
+    /// 使用訊號的 Windows 實作：低階滑鼠與鍵盤鉤子、GetLastInputInfo、Core Audio 峰值。
+    /// 鉤子同時記錄全部輸入與只有實體輸入（不是注入的輸入，也不是 Windows 遠端桌面工作階段），由核心依切換條件選用。
+    /// </summary>
     sealed class WindowsUsageSignals : IUsageSignals, IDisposable
     {
         const int WM_MOUSEMOVE = 0x0200;
@@ -34,10 +37,14 @@ namespace AutoDisplayMode.Windows
         readonly AudioMonitor? audio;
 
         InputHookPolicy policy;
-        bool hookUsage;           // 上次讀取以來是否有實體的鍵盤滑鼠動作
-        bool isRemoteSession;     // 是否為 Windows 遠端桌面 (RDP) 工作階段
-        bool hasAnchor;
-        int anchorX, anchorY;
+        bool anyUsage;            // 上次讀取以來是否有鍵盤滑鼠使用（包括遠端連線軟體注入的）
+        bool physicalUsage;       // 上次讀取以來是否有實體的鍵盤滑鼠使用
+        bool isRemoteSession;     // 是否為 Windows 遠端桌面 (RDP) 工作階段：所有輸入都算遠端
+        bool hasLast;             // 有上一個滑鼠位置
+        int lastX, lastY;
+        // 自上次算一次使用以來累積的滑鼠位移：全部輸入與只有實體輸入分開累積
+        // （注入的移動也會改變游標位置，實體輸入只累加實體事件的位移）
+        long anyDx, anyDy, physicalDx, physicalDy;
         int hookAgeCalls;
 
         public WindowsUsageSignals(IClock clock)
@@ -58,18 +65,24 @@ namespace AutoDisplayMode.Windows
             }
         }
 
-        public bool TakeHookUsage()
+        public HookUsage TakeHookUsage()
         {
             isRemoteSession = SystemInformation.TerminalServerSession;
-            bool r = hookUsage;
-            hookUsage = false;
+            var r = new HookUsage(anyUsage, physicalUsage);
+            anyUsage = physicalUsage = false;
             return r;
         }
 
         public void ResetHookTracking()
         {
-            hookUsage = false;
-            hasAnchor = false;
+            anyUsage = physicalUsage = false;
+            ResetMovement();
+        }
+
+        void ResetMovement()
+        {
+            hasLast = false;
+            anyDx = anyDy = physicalDx = physicalDy = 0;
         }
 
         public float ReadAudioPeak()
@@ -90,7 +103,7 @@ namespace AutoDisplayMode.Windows
                 {
                     mouseHook.Install();
                     keyboardHook.Install();
-                    hasAnchor = false;
+                    ResetMovement();
                     hookAgeCalls = 0;
                 }
                 else if (++hookAgeCalls >= RehookEveryCalls)
@@ -109,15 +122,22 @@ namespace AutoDisplayMode.Windows
             }
         }
 
-        /// <summary>鉤子收到的輸入是否要忽略：忽略期間內，或（設定忽略遠端輸入時）遠端桌面工作階段、注入的輸入。</summary>
-        bool Ignored(bool injected)
+        /// <summary>鉤子收到的輸入是否要忽略（忽略期間內）。</summary>
+        bool Ignored()
         {
             if (clock.NowMs < policy.IgnoreUntilMs)
             {
-                hasAnchor = false;
+                ResetMovement();
                 return true;
             }
-            return policy.IgnoreRemoteInput && (isRemoteSession || injected);
+            return false;
+        }
+
+        /// <summary>算一次使用：實體輸入同時算在全部輸入中；遠端桌面工作階段與注入的輸入只算在全部輸入。</summary>
+        void Used(bool injected)
+        {
+            anyUsage = true;
+            if (!injected && !isRemoteSession) physicalUsage = true;
         }
 
         void OnMouse(int msg, IntPtr data)
@@ -126,31 +146,44 @@ namespace AutoDisplayMode.Windows
             int x = Marshal.ReadInt32(data, 0);
             int y = Marshal.ReadInt32(data, 4);
             uint flags = (uint)Marshal.ReadInt32(data, 12);
-            if (Ignored((flags & (LLMHF_INJECTED | LLMHF_LOWER_IL_INJECTED)) != 0)) return;
+            bool injected = (flags & (LLMHF_INJECTED | LLMHF_LOWER_IL_INJECTED)) != 0;
+            if (Ignored()) return;
 
             if (msg == WM_MOUSEMOVE)
             {
-                if (!hasAnchor)
+                if (!hasLast)
                 {
-                    anchorX = x;
-                    anchorY = y;
-                    hasAnchor = true;
+                    lastX = x;
+                    lastY = y;
+                    hasLast = true;
                     return;
                 }
-                long dx = x - anchorX;
-                long dy = y - anchorY;
+                long dx = x - lastX, dy = y - lastY;
+                lastX = x;
+                lastY = y;
                 long th = policy.MoveThreshold;
-                if (dx * dx + dy * dy >= th * th)
+                anyDx += dx;
+                anyDy += dy;
+                if (anyDx * anyDx + anyDy * anyDy >= th * th)
                 {
-                    hookUsage = true;
-                    anchorX = x;
-                    anchorY = y;
+                    anyUsage = true;
+                    anyDx = anyDy = 0;
+                }
+                if (!injected && !isRemoteSession)
+                {
+                    physicalDx += dx;
+                    physicalDy += dy;
+                    if (physicalDx * physicalDx + physicalDy * physicalDy >= th * th)
+                    {
+                        physicalUsage = true;
+                        physicalDx = physicalDy = 0;
+                    }
                 }
             }
             else
             {
                 // 點擊、滾輪
-                hookUsage = true;
+                Used(injected);
             }
         }
 
@@ -159,8 +192,8 @@ namespace AutoDisplayMode.Windows
             if (msg != WM_KEYDOWN && msg != WM_SYSKEYDOWN) return;
             // KBDLLHOOKSTRUCT: vkCode(0) scanCode(4) flags(8) time(12)
             uint flags = (uint)Marshal.ReadInt32(data, 8);
-            if (Ignored((flags & (LLKHF_INJECTED | LLKHF_LOWER_IL_INJECTED)) != 0)) return;
-            hookUsage = true;
+            if (Ignored()) return;
+            Used((flags & (LLKHF_INJECTED | LLKHF_LOWER_IL_INJECTED)) != 0);
         }
 
         public void Dispose()

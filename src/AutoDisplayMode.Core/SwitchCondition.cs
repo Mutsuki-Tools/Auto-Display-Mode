@@ -56,6 +56,27 @@ namespace AutoDisplayMode.Core
         /// <summary>強制：即使自動切換關閉、設定視窗開著，這條切換條件照樣生效。</summary>
         public bool Forced { get; init; }
 
+        /// <summary>
+        /// 內建切換條件：潛行模式自帶、不能刪除。條件固定為「偵測到使用（鍵盤滑鼠，只認實體輸入）」且強制，只有目標模式可以改（只能是一般模式）。
+        /// </summary>
+        public bool BuiltIn { get; init; }
+
+        /// <summary>潛行模式 <paramref name="remoteModeId"/> 的內建切換條件，目標模式為 <paramref name="targetModeId"/>。</summary>
+        public static SwitchCondition BuiltInFor(int remoteModeId, int targetModeId) => new()
+        {
+            FromModeId = remoteModeId,
+            Kind = SwitchConditionKind.UsageDetected,
+            Sources = UsageSources.MouseKeyboard,
+            ToModeId = targetModeId,
+            Forced = true,
+            BuiltIn = true,
+        };
+
+        /// <summary>內建切換條件鎖定的欄位是否都是固定值（條件、使用來源、強制）。</summary>
+        internal bool HasBuiltInFields =>
+            Kind == SwitchConditionKind.UsageDetected && Sources == UsageSources.MouseKeyboard && Forced &&
+            IdleAmount == new SwitchCondition().IdleAmount && IdleUnit == default;
+
         /// <summary>閒置時間（毫秒）。</summary>
         public long IdleMs => IdleAmount * (IdleUnit == IdleUnit.Hours ? 3_600_000L : 60_000L);
 
@@ -71,18 +92,27 @@ namespace AutoDisplayMode.Core
         /// <summary>依 <paramref name="config"/> 中的模式檢查這條切換條件；有效時回傳 null，否則回傳無效的原因。</summary>
         public string? Validate(AppConfig config)
         {
-            if (config.FindMode(FromModeId) == null) return "來源模式不存在";
-            if (config.FindMode(ToModeId) == null) return "目標模式不存在";
+            ModeConfig? from = config.FindMode(FromModeId), to = config.FindMode(ToModeId);
+            if (from == null) return "來源模式不存在";
+            if (to == null) return "目標模式不存在";
             if (FromModeId == ToModeId) return "來源模式與目標模式相同";
+            if (BuiltIn)
+            {
+                if (!from.IsRemote) return "內建切換條件的來源模式必須是潛行模式";
+                if (to.IsRemote) return "內建切換條件的目標模式必須是一般模式";
+                if (!HasBuiltInFields) return "內建切換條件的條件固定為偵測到使用（鍵盤滑鼠）且強制";
+            }
             if ((Sources & (UsageSources.MouseKeyboard | UsageSources.Audio)) == 0) return "未選任何使用來源";
             if (Kind == SwitchConditionKind.Idle && IdleAmount < 1) return "閒置時間必須是正整數";
             return null;
         }
 
-        /// <summary>給人看的描述，例如「遊玩」閒置 5 分鐘（鍵盤滑鼠、聲音）→「省電」；有勾強制時結尾加上「（強制）」。</summary>
+        /// <summary>
+        /// 給人看的描述，例如「遊玩」閒置 5 分鐘（鍵盤滑鼠、聲音）→「省電」；有勾強制時結尾加上「（強制）」，內建切換條件加上「（內建）」。
+        /// </summary>
         public string Describe(AppConfig config) =>
             "「" + ModeName(config, FromModeId) + "」" + DescribeCondition() + "（" + DescribeSources() + "）→「" + ModeName(config, ToModeId) + "」" +
-            (Forced ? "（強制）" : "");
+            (BuiltIn ? "（內建）" : Forced ? "（強制）" : "");
 
         /// <summary>條件部分的描述，例如「閒置 5 分鐘」「偵測到使用」。</summary>
         public string DescribeCondition() =>

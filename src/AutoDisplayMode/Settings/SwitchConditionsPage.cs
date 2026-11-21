@@ -15,6 +15,7 @@ namespace AutoDisplayMode.Settings
     {
         const int FromCol = 0, KindCol = 1, AmountCol = 2, UnitCol = 3, MouseCol = 4, AudioCol = 5, ToCol = 6, ForcedCol = 7;
         const string ForcedTip = "勾選後，即使自動切換關閉、設定視窗開著，這條也照樣生效";
+        const string BuiltInTip = "潛行模式的內建切換條件：條件固定為偵測到使用（只認實體鍵盤滑鼠）且強制，只能改目標模式，不能刪除";
 
         readonly AppCoordinator app;
         readonly DataGridView grid;
@@ -127,7 +128,8 @@ namespace AutoDisplayMode.Settings
                 "拖拉列首（每列最左邊的格子）或按「上移」「下移」調整順序。\n" +
                 "閒置：所選的使用來源全部都沒有使用，持續指定的時間。\n" +
                 "偵測到使用：所選的使用來源任一個出現使用就成立。\n" +
-                "強制：" + ForcedTip + "。");
+                "強制：" + ForcedTip + "。\n" +
+                "（內建）：潛行模式自帶的切換條件，只能改目標模式，不能刪除。");
             usage.Margin = new Padding(3, 6, 3, 0);
             root.Controls.Add(usage, 0, 4);
             Controls.Add(root);
@@ -139,7 +141,14 @@ namespace AutoDisplayMode.Settings
             "・用「新增」「刪除」管理切換條件，直接在表格中修改來源模式、條件、使用來源與目標模式。\n" +
             "・只檢查來源模式等於目前模式的切換條件，由上往下第一條成立的就切換。拖拉列首或按「上移」「下移」調整順序。\n" +
             "・自動切換關閉時（右鍵選單「自動切換」），只檢查有勾「強制」的切換條件。\n" +
-            "・強制：勾選後，即使自動切換關閉、設定視窗開著，這條也照樣生效（預設不勾）。\n\n" +
+            "・強制：勾選後，即使自動切換關閉、設定視窗開著，這條也照樣生效（預設不勾）。\n" +
+            "・潛行模式也能當來源模式與目標模式，例如「閒置 30 分鐘 → 潛行」。\n\n" +
+            "【內建切換條件】\n" +
+            "・每個潛行模式自帶一條，來源模式標示「（內建）」：處於該潛行模式時偵測到使用（鍵盤滑鼠）就切換到目標模式，人回到電腦前一動滑鼠就換回實體螢幕。\n" +
+            "・只認實體鍵盤滑鼠：不管一般設定的「忽略遠端連線軟體送出的鍵盤滑鼠輸入」，在 Chrome 遠端桌面裡操作都不會離開潛行模式。\n" +
+            "・一律強制，條件與使用來源鎖定；只能改目標模式（只能選一般模式，預設是順序第一個一般模式）。\n" +
+            "・不能刪除；新增潛行模式時加在清單最後，刪除潛行模式時一起刪除。可以和其他切換條件一起調整順序。\n" +
+            "・目標模式被刪除時，改成順序第一個一般模式，並在套用時提示。\n\n" +
             "【條件】\n" +
             "・閒置：所選的使用來源全部都沒有使用，持續指定的分鐘或小時。\n" +
             "・偵測到使用：所選的使用來源任一個出現使用就成立。\n" +
@@ -149,7 +158,7 @@ namespace AutoDisplayMode.Settings
             "・設定視窗開著時暫停沒勾強制的切換條件；有勾強制的照樣生效，切換後設定視窗維持開啟，編輯中的內容不受影響。\n" +
             "・只有目前模式有會被檢查的「偵測到使用＋鍵盤滑鼠」切換條件時才監聽鍵盤滑鼠輸入（自動切換關閉或設定視窗開著時只看有勾強制的），其他情況完全不監聽（閒置計時只看 Windows 記錄的最後輸入時間）。\n\n" +
             "【無法套用】\n" +
-            "・來源模式與目標模式相同、沒有選任何使用來源、閒置時間不是正整數。";
+            "・來源模式與目標模式相同、沒有選任何使用來源、閒置時間不是正整數、內建切換條件的目標不是一般模式。";
 
         protected override void OnLoad(AppConfig d)
         {
@@ -219,6 +228,7 @@ namespace AutoDisplayMode.Settings
             filling = true;
             try
             {
+                ShowBuiltIn(row, s);   // 先換下拉選項，再設定值
                 Set(row.Cells[FromCol], s.FromModeId);
                 Set(row.Cells[KindCol], (int)s.Kind);
                 Set(row.Cells[MouseCol], s.Uses(UsageSources.MouseKeyboard));
@@ -248,6 +258,51 @@ namespace AutoDisplayMode.Settings
             }
         }
 
+        /// <summary>
+        /// 內建切換條件：來源模式標示「（內建）」，條件、使用來源與強制鎖定，目標模式只能選一般模式。
+        /// 一般的切換條件：來源模式與目標模式可選任何模式（包括潛行模式）。
+        /// </summary>
+        void ShowBuiltIn(DataGridViewRow row, SwitchCondition s)
+        {
+            var from = (DataGridViewComboBoxCell)row.Cells[FromCol];
+            var to = (DataGridViewComboBoxCell)row.Cells[ToCol];
+            if (s.BuiltIn)
+            {
+                string fromName = draft.FindMode(s.FromModeId) is ModeConfig m ? DisplayName(m) : "模式 " + s.FromModeId;
+                SetItems(from, new[] { new Choice(s.FromModeId, fromName + "（內建）") });
+                var targets = draft.Modes.Where(x => !x.IsRemote).Select(x => new Choice(x.Id, DisplayName(x))).ToList();
+                if (targets.All(c => c.Value != s.ToModeId))
+                    targets.Add(new Choice(s.ToModeId, draft.FindMode(s.ToModeId) is ModeConfig t ? DisplayName(t) + "（潛行模式不能當目標）" : "（不存在的模式 " + s.ToModeId + "）"));
+                SetItems(to, targets);
+            }
+            else
+            {
+                SetItems(from, fromColumn.Items.Cast<Choice>());
+                SetItems(to, toColumn.Items.Cast<Choice>());
+            }
+
+            foreach (int col in new[] { FromCol, KindCol, MouseCol, AudioCol, ForcedCol })
+            {
+                DataGridViewCell cell = row.Cells[col];
+                cell.ReadOnly = s.BuiltIn;
+                cell.Style.BackColor = s.BuiltIn ? SystemColors.Control : SystemColors.Window;
+                cell.ToolTipText = s.BuiltIn ? BuiltInTip : col == ForcedCol ? ForcedTip : "";
+                if (cell is DataGridViewComboBoxCell combo)
+                    combo.DisplayStyle = s.BuiltIn ? DataGridViewComboBoxDisplayStyle.Nothing : DataGridViewComboBoxDisplayStyle.DropDownButton;
+            }
+            to.ToolTipText = s.BuiltIn ? "內建切換條件的目標只能是一般模式" : "";
+        }
+
+        /// <summary>只在選項不同時改寫儲存格自己的下拉選項（改寫會打斷正在編輯的儲存格）。</summary>
+        static void SetItems(DataGridViewComboBoxCell cell, IEnumerable<Choice> choices)
+        {
+            List<Choice> list = choices.ToList();
+            if (cell.Items.Count == list.Count && cell.Items.Cast<Choice>().Select(c => (c.Value, c.Text)).SequenceEqual(list.Select(c => (c.Value, c.Text))))
+                return;
+            cell.Items.Clear();
+            cell.Items.AddRange(list.Cast<object>().ToArray());
+        }
+
         /// <summary>值不同時才改寫儲存格（正在編輯的儲存格值相同，不會被打斷）。</summary>
         static void Set(DataGridViewCell cell, object? value)
         {
@@ -265,7 +320,7 @@ namespace AutoDisplayMode.Settings
         void UpdateButtons()
         {
             int i = SelectedIndex;
-            removeButton.Enabled = i >= 0;
+            removeButton.Enabled = i >= 0 && i < draft.SwitchConditions.Count && !draft.SwitchConditions[i].BuiltIn;
             upButton.Enabled = i > 0;
             downButton.Enabled = i >= 0 && i < grid.Rows.Count - 1;
         }
@@ -363,6 +418,11 @@ namespace AutoDisplayMode.Settings
         {
             int i = SelectedIndex;
             if (i < 0) return;
+            if (draft.SwitchConditionRemovalBlocker(i) is string reason)
+            {
+                MessageBox.Show(FindForm(), reason + "。", FindForm()?.Text, MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
             grid.CancelEdit();
             draft.SwitchConditions.RemoveAt(i);
             MarkEdited();

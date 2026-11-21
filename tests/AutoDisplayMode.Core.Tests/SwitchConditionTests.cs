@@ -365,16 +365,11 @@ namespace AutoDisplayMode.Core.Tests
         }
 
         [Fact]
-        public void 鉤子需求帶入滑鼠移動門檻與遠端輸入過濾設定()
+        public void 鉤子需求帶入滑鼠移動門檻()
         {
-            var custom = Modes(Save, "MouseMoveThreshold=25", "IgnoreRemoteInput=0", Sw.Usage(Save, Play));
+            var custom = Modes(Save, "MouseMoveThreshold=25", Sw.Usage(Save, Play));
             custom.Run(1);
-            Assert.Equal((true, 25, false),
-                (custom.Signals.Policy.Install, custom.Signals.Policy.MoveThreshold, custom.Signals.Policy.IgnoreRemoteInput));
-
-            var defaults = Modes(Save, Sw.Usage(Save, Play));
-            defaults.Run(1);
-            Assert.True(defaults.Signals.Policy.IgnoreRemoteInput);
+            Assert.Equal((true, 25), (custom.Signals.Policy.Install, custom.Signals.Policy.MoveThreshold));
         }
 
         [Fact]

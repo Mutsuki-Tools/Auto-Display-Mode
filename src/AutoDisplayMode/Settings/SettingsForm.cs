@@ -16,6 +16,7 @@ namespace AutoDisplayMode.Settings
         readonly AppCoordinator app;
         readonly SettingsPage[] pages;
         readonly ModesPage modesPage;   // 套用時提供在視窗中擷取的模式
+        readonly DriverController driverController;
         readonly Button applyButton;
         readonly Label pendingLabel;    // 「有尚未套用的變更」
         readonly AppConfig draft;
@@ -50,8 +51,10 @@ namespace AutoDisplayMode.Settings
             AcceptButton = ok;
             CancelButton = cancel;
 
-            modesPage = new ModesPage(app);
-            pages = new SettingsPage[] { modesPage, new LayoutPage(app), new SwitchConditionsPage(app), new GeneralPage(driver) };
+            // 虛擬螢幕驅動的狀態：一般設定分頁與模式分頁（潛行模式旁的警告）共用；開啟、切換分頁與套用後重新讀取
+            driverController = new DriverController(driver, this);
+            modesPage = new ModesPage(app, driverController);
+            pages = new SettingsPage[] { modesPage, new LayoutPage(app), new SwitchConditionsPage(app), new GeneralPage(driverController) };
 
             tabs = new TabControl { Dock = DockStyle.Fill };
             foreach (SettingsPage page in pages)
@@ -62,7 +65,12 @@ namespace AutoDisplayMode.Settings
             }
             // 離開分頁前送出還沒確認的輸入；切換分頁時重新顯示副本，反映其他分頁的修改（例如模式改名後，下拉選單顯示新名稱）
             tabs.Deselecting += (_, e) => (e.TabPage as SettingsPage)?.CommitEdits();
-            tabs.Selected += (_, e) => (e.TabPage as SettingsPage)?.Load(draft);
+            tabs.Selected += (_, e) =>
+            {
+                (e.TabPage as SettingsPage)?.Load(draft);
+                driverController.Refresh();
+            };
+            driverController.Refresh();
 
             var buttons = new FlowLayoutPanel
             {
@@ -130,6 +138,7 @@ namespace AutoDisplayMode.Settings
             foreach (SettingsPage page in pages) page.OnApplied();
             // 套用後模式依順序重新編號（副本也一樣）：重新顯示目前的分頁，其他分頁切換過去時會重新顯示
             (tabs.SelectedTab as SettingsPage)?.Load(draft);
+            driverController.Refresh();
             return true;
         }
 

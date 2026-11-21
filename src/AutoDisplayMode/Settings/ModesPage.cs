@@ -8,12 +8,14 @@ using AutoDisplayMode.Core;
 namespace AutoDisplayMode.Settings
 {
     /// <summary>
-    /// 「模式」分頁：新增、刪除、重新命名、複製模式，設定圖示顏色、手動切換進入時的自動切換、未記錄的螢幕，
-    /// 以及在視窗中擷取（結果先存進副本，套用時存入的模式成為目前模式）。
+    /// 「模式」分頁：新增（一般模式或潛行模式）、刪除、重新命名、複製模式，設定圖示顏色、手動切換進入時的自動切換、
+    /// 未記錄的螢幕（一般模式）或虛擬螢幕的解析度與更新率（潛行模式），以及在視窗中擷取（結果先存進副本，套用時存入的模式成為目前模式）。
+    /// 虛擬螢幕驅動不可用時，潛行模式的設定中顯示警告與「安裝驅動」按鈕（與一般設定分頁共用 <see cref="DriverController"/>）。
     /// </summary>
     sealed class ModesPage : SettingsPage
     {
         readonly AppCoordinator app;
+        readonly DriverController driver;
         readonly ListBox list;
         readonly TextBox name;
         readonly Label nameError;
@@ -22,6 +24,17 @@ namespace AutoDisplayMode.Settings
         readonly ComboBox unlisted;
         readonly Label monitorsSummary;
         readonly Label captureNote;
+        readonly Label captureBlocked;
+        readonly Button captureButton;
+        readonly Button captureNewButton;
+        readonly ToolTip tips = new();
+        readonly ComboBox virtualResolution;
+        readonly ComboBox virtualRate;
+        readonly Label driverWarning;
+        readonly Label driverDetail;
+        readonly Button installDriver;
+        readonly List<Control> normalOnly = new();   // 只有一般模式顯示的欄位
+        readonly List<Control> remoteOnly = new();   // 只有潛行模式顯示的欄位
         readonly Button removeButton;
         readonly Button duplicateButton;
         readonly Button upButton;
@@ -34,9 +47,22 @@ namespace AutoDisplayMode.Settings
         AppConfig draft = new();
         bool showing;   // 正在把選取的模式顯示到欄位上：欄位改變不寫回副本
 
-        public ModesPage(AppCoordinator app) : base("模式")
+        /// <summary>虛擬螢幕解析度下拉選單的項目。</summary>
+        sealed record Resolution(int Width, int Height)
+        {
+            public override string ToString() => Width + " × " + Height;
+        }
+
+        /// <summary>虛擬螢幕更新率下拉選單的項目。</summary>
+        sealed record Rate(int Hz)
+        {
+            public override string ToString() => Hz + " Hz";
+        }
+
+        public ModesPage(AppCoordinator app, DriverController driver) : base("模式")
         {
             this.app = app;
+            this.driver = driver;
 
             // ---- 左邊：模式清單與按鈕 ----
             list = new ListBox
@@ -58,7 +84,9 @@ namespace AutoDisplayMode.Settings
             downButton = ListButton("下移");
             upButton.Click += delegate { MoveSelected(-1); };
             downButton.Click += delegate { MoveSelected(+1); };
-            var captureNewButton = ListButton("以目前螢幕狀態新增模式");
+            var addRemoteButton = ListButton("新增潛行模式（虛擬螢幕）");
+            addRemoteButton.Click += delegate { AddRemoteMode(); };
+            captureNewButton = ListButton("以目前螢幕狀態新增模式");
             captureNewButton.Click += delegate { CaptureToNewMode(); };
 
             // 拖拉清單中的模式調整順序
@@ -69,13 +97,11 @@ namespace AutoDisplayMode.Settings
             list.DragLeave += delegate { SetInsertAt(-1); };
             list.DragDrop += OnListDragDrop;
 
-            // 左欄：清單在上，下方一列三個等寬按鈕（新增、複製、刪除），一列上移、下移，再下方一個整列寬的按鈕
-            var left = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, RowCount = 4, Margin = new Padding(0, 0, 12, 0) };
+            // 左欄：清單在上，下方一列三個等寬按鈕（新增、複製、刪除），一列上移、下移，再下方兩個整列寬的按鈕
+            var left = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, RowCount = 5, Margin = new Padding(0, 0, 12, 0) };
             for (int i = 0; i < 3; i++) left.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33.33f));
             left.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-            left.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            left.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            left.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            for (int i = 0; i < 4; i++) left.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             left.Controls.Add(list, 0, 0);
             left.SetColumnSpan(list, 3);
             left.Controls.Add(addButton, 0, 1);
@@ -83,8 +109,11 @@ namespace AutoDisplayMode.Settings
             left.Controls.Add(removeButton, 2, 1);
             left.Controls.Add(upButton, 0, 2);
             left.Controls.Add(downButton, 1, 2);
-            left.Controls.Add(captureNewButton, 0, 3);
+            left.Controls.Add(addRemoteButton, 0, 3);
+            left.SetColumnSpan(addRemoteButton, 3);
+            left.Controls.Add(captureNewButton, 0, 4);
             left.SetColumnSpan(captureNewButton, 3);
+            tips.SetToolTip(addRemoteButton, "所有螢幕關閉、只開一個虛擬螢幕給遠端連線軟體使用的模式");
             addButton.Margin = new Padding(0, 6, 3, 0);
             duplicateButton.Margin = new Padding(3, 6, 3, 0);
             removeButton.Margin = new Padding(3, 6, 0, 0);
@@ -120,9 +149,36 @@ namespace AutoDisplayMode.Settings
             };
 
             monitorsSummary = new Label { AutoSize = true, Margin = new Padding(3, 0, 3, 0) };
-            var captureButton = new Button { Text = "以目前螢幕狀態覆蓋此模式", AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(3, 6, 3, 0) };
+            captureButton = new Button { Text = "以目前螢幕狀態覆蓋此模式", AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(3, 6, 3, 0) };
             captureButton.Click += delegate { CaptureToSelectedMode(); };
             captureNote = new Label { AutoSize = true, ForeColor = Color.SeaGreen, Margin = new Padding(3, 3, 3, 0), Visible = false };
+            captureBlocked = SmallHint(AppCoordinator.RemoteCaptureText);
+            captureBlocked.ForeColor = Color.DarkOrange;
+
+            // 潛行模式：虛擬螢幕的解析度與更新率（從驅動提供的模式中挑常見的）
+            virtualResolution = Choice();
+            virtualResolution.Width = 120;
+            virtualResolution.SelectedIndexChanged += delegate { OnVirtualResolutionChanged(); };
+            virtualRate = Choice();
+            virtualRate.Width = 80;
+            virtualRate.SelectedIndexChanged += delegate
+            {
+                if (!showing && Selected is { IsRemote: true } m && virtualRate.SelectedItem is Rate r)
+                {
+                    m.VirtualMode = m.VirtualMode with { RefreshRate = r.Hz };
+                    MarkEdited();
+                }
+            };
+            var virtualRow = new FlowLayoutPanel { AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, WrapContents = false, Margin = new Padding(0) };
+            virtualRow.Controls.Add(virtualResolution);
+            virtualRow.Controls.Add(virtualRate);
+
+            // 潛行模式：虛擬螢幕驅動不可用時的警告與「安裝驅動」
+            driverWarning = new Label { AutoSize = true, ForeColor = Color.Firebrick, Anchor = AnchorStyles.Left, Margin = new Padding(3, 6, 6, 0) };
+            installDriver = new Button { Text = "安裝驅動", AutoSize = true, Margin = new Padding(3, 3, 3, 0) };
+            installDriver.Click += delegate { driver.Run(install: true); };
+            driverDetail = SmallHint("");
+            driver.Changed += ShowDriver;
 
             // 右欄可捲動；內層表格寬度跟著右欄（Dock = Top），不會出現水平捲軸
             detailsTable = new TableLayoutPanel
@@ -134,7 +190,11 @@ namespace AutoDisplayMode.Settings
                 Margin = new Padding(0),
             };
             detailsTable.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-            void Add(Control c) => detailsTable.Controls.Add(c);
+            void Add(Control c, List<Control>? only = null)
+            {
+                detailsTable.Controls.Add(c);
+                only?.Add(c);
+            }
             Add(Section("名稱", first: true));
             Add(Wrap(name));
             Add(nameError);
@@ -143,14 +203,28 @@ namespace AutoDisplayMode.Settings
             Add(Section("手動切換進入此模式時，自動切換要"));
             Add(Wrap(manualAutoSwitch));
             Add(SmallHint("例如手動切到省電時選「關閉」，就不會一動滑鼠又被切回來。"));
-            Add(Section("未記錄的螢幕"));
-            Add(Wrap(unlisted));
-            Add(SmallHint("套用此模式時，接上但此模式沒有記錄的螢幕要維持現狀或關閉。"));
-            Add(Section("螢幕設定"));
-            Add(monitorsSummary);
-            Add(captureButton);
-            Add(captureNote);
-            Add(SmallHint("擷取的結果按「套用」或「套用並關閉」後才存檔，存入的模式隨即成為目前模式。"));
+
+            Add(Section("未記錄的螢幕"), normalOnly);
+            Add(Wrap(unlisted), normalOnly);
+            Add(SmallHint("套用此模式時，接上但此模式沒有記錄的螢幕要維持現狀或關閉。"), normalOnly);
+            Add(Section("螢幕設定"), normalOnly);
+            Add(monitorsSummary, normalOnly);
+            Add(captureButton, normalOnly);
+            Add(captureNote, normalOnly);
+            Add(captureBlocked, normalOnly);
+            Add(SmallHint("擷取的結果按「套用」或「套用並關閉」後才存檔，存入的模式隨即成為目前模式。"), normalOnly);
+
+            Add(Section("虛擬螢幕的解析度與更新率"), remoteOnly);
+            Add(virtualRow, remoteOnly);
+            Add(SmallHint("遠端期間 Chrome 遠端桌面等軟體調整了解析度，程式不會改回來，也不會存進模式。"), remoteOnly);
+            Add(driverWarning, remoteOnly);
+            Add(installDriver, remoteOnly);
+            Add(driverDetail, remoteOnly);
+            Add(Section("潛行模式"), remoteOnly);
+            Add(SmallHint(
+                "進入潛行模式時所有螢幕都關閉，電腦照常運作，只開一個虛擬螢幕給遠端連線軟體（例如 Chrome 遠端桌面）擷取，" +
+                "遠端畫面不再被實體螢幕的數量、排列與解析度綁住。也能省下螢幕的電與部分顯示卡負擔（省電效果不及睡眠，它是為了同時支援遠端）。\n" +
+                "「潛行」指螢幕全暗，不是防窺：坐在電腦前的人動一下實體鍵盤滑鼠，就依內建切換條件回到一般模式（目標在「切換條件」分頁選）。"), remoteOnly);
 
             details = new Panel { Dock = DockStyle.Fill, AutoScroll = true, Margin = new Padding(0) };
             details.Controls.Add(detailsTable);
@@ -185,15 +259,28 @@ namespace AutoDisplayMode.Settings
             "・模式是一組有名稱的螢幕設定（從它出發的切換條件在「切換條件」分頁設定）。右鍵選單依這裡的順序列出所有模式，點一下即手動切換。\n" +
             "・用「新增」「複製」「刪除」管理模式，在右邊修改名稱、圖示顏色與下列設定。\n" +
             "・拖拉清單中的模式或按「上移」「下移」調整順序；套用後 cfg 的模式編號依新順序重新編排，切換條件跟著改。\n" +
-            "・刪除模式時，來源模式或目標模式是它的切換條件會一併刪除；最後一個模式與目前模式不能刪除。\n" +
+            "・刪除模式時，來源模式或目標模式是它的切換條件會一併刪除（內建切換條件除外，見下方）；最後一個模式、最後一個一般模式與目前模式不能刪除。\n" +
             "・每台螢幕的位置、解析度等在「螢幕配置」分頁調整。\n\n" +
+            "【潛行模式】\n" +
+            "・「新增潛行模式（虛擬螢幕）」建立潛行模式，清單上標示「（潛行）」。複製潛行模式得到潛行模式；一般模式和潛行模式不能互相轉換。\n" +
+            "・效果：所有螢幕關閉，電腦照常運作，只開一個虛擬螢幕給遠端連線軟體（例如 Chrome 遠端桌面）擷取。" +
+            "遠端畫面不再被實體螢幕的數量、排列與解析度綁住，視窗也不會開在遠端不方便看的螢幕上。\n" +
+            "・也能省下螢幕的電與部分顯示卡負擔，但省電效果不及睡眠：它是為了在省電的同時支援遠端。\n" +
+            "・「潛行」指螢幕全暗，不是防窺：坐在電腦前的人動一下實體鍵盤滑鼠就會離開。\n" +
+            "・虛擬螢幕的解析度與更新率在右邊選（預設 1920 × 1080、60 Hz）。遠端期間 Chrome 遠端桌面調整了解析度，程式不會改回來，也不會存進模式。\n" +
+            "・潛行模式沒有「未記錄的螢幕」與螢幕配置，也不能擷取。\n" +
+            "・需要虛擬螢幕驅動（在「一般設定」分頁安裝）。驅動不可用時，切換到潛行模式會被拒絕並跳出通知，維持原本的模式。\n" +
+            "・每個潛行模式自帶一條內建切換條件：偵測到使用（實體鍵盤滑鼠）就切換到所選的一般模式，一律強制、不能刪除，" +
+            "只能在「切換條件」分頁改目標模式。刪除潛行模式時一起刪除；它的目標模式被刪除時，改成順序第一個一般模式。\n" +
+            "・離開潛行模式若不是經由切換（程式啟動時目前模式是潛行模式、虛擬螢幕意外消失），會回到復原模式：最後一個處於過的一般模式。\n\n" +
             "【套用模式時】\n" +
             "・模式中記錄但沒接上的螢幕會略過。\n" +
             "・接上但模式中沒有記錄的螢幕，依「未記錄的螢幕」維持現狀或關閉。\n" +
             "・套用後沒有任何螢幕會開著時拒絕切換；套用失敗時維持原本的模式，自動切換暫停 1 分鐘。\n" +
             "・手動切換進入模式時，自動切換依模式的設定維持、開啟或關閉。例如手動切到省電時選「關閉」，就不會一動滑鼠又被切回來。\n\n" +
             "【擷取】\n" +
-            "・「以目前螢幕狀態覆蓋此模式」把目前每台螢幕的狀態存進選取的模式；「以目前螢幕狀態新增模式」存成一個新模式。\n" +
+            "・「以目前螢幕狀態覆蓋此模式」把目前每台螢幕的狀態存進選取的一般模式；「以目前螢幕狀態新增模式」存成一個新的一般模式。\n" +
+            "・處於潛行模式時無法擷取（所有螢幕都關閉了，擷取會把「全部關閉」存進模式）。\n" +
             "・按「套用」或「套用並關閉」後才存檔，存入的模式隨即成為目前模式，並重新開始計時。";
 
         protected override void OnLoad(AppConfig d)
@@ -237,6 +324,9 @@ namespace AutoDisplayMode.Settings
                 if (name.Text != m.Name) name.Text = m.Name;
                 manualAutoSwitch.SelectedIndex = (int)m.ManualAutoSwitch;
                 unlisted.SelectedIndex = (int)m.UnlistedMonitors;
+                foreach (Control c in normalOnly) c.Visible = !m.IsRemote;
+                foreach (Control c in remoteOnly) c.Visible = m.IsRemote;
+                if (m.IsRemote) ShowVirtualMode(m.VirtualMode);
             }
             finally
             {
@@ -245,6 +335,85 @@ namespace AutoDisplayMode.Settings
             UpdateNameError();
             UpdateColors();
             UpdateMonitors();
+            UpdateCapture();
+            ShowDriver();
+        }
+
+        // ---- 潛行模式：虛擬螢幕 ----
+
+        /// <summary>
+        /// 解析度與更新率下拉選單：常見的模式（<see cref="VirtualDisplayModes.Common"/>），模式記錄的值不在清單中時（手動編輯 cfg）也列出。
+        /// </summary>
+        void ShowVirtualMode(VideoMode v)
+        {
+            virtualResolution.Items.Clear();
+            var resolutions = VirtualDisplayModes.Common.Select(c => new Resolution(c.Width, c.Height)).Distinct().ToList();
+            var current = new Resolution(v.Width, v.Height);
+            if (!resolutions.Contains(current)) resolutions.Add(current);
+            foreach (Resolution r in resolutions.OrderByDescending(r => r.Width * r.Height)) virtualResolution.Items.Add(r);
+            virtualResolution.SelectedItem = current;
+            ShowVirtualRates(v);
+        }
+
+        void ShowVirtualRates(VideoMode v)
+        {
+            virtualRate.Items.Clear();
+            foreach (int hz in VirtualRates(v.Width, v.Height, v.RefreshRate)) virtualRate.Items.Add(new Rate(hz));
+            virtualRate.SelectedItem = new Rate(v.RefreshRate);
+        }
+
+        /// <summary>解析度 <paramref name="width"/> × <paramref name="height"/> 的常見更新率（由高到低）；<paramref name="recorded"/> 大於 0 且不在清單中時也列出。</summary>
+        static List<int> VirtualRates(int width, int height, int recorded)
+        {
+            var list = VirtualDisplayModes.Common.Where(c => c.Width == width && c.Height == height).Select(c => c.RefreshRate).ToList();
+            if (recorded > 0 && !list.Contains(recorded)) list.Add(recorded);
+            return list.OrderByDescending(hz => hz).ToList();
+        }
+
+        void OnVirtualResolutionChanged()
+        {
+            if (showing || Selected is not { IsRemote: true } m || virtualResolution.SelectedItem is not Resolution r) return;
+            // 更新率：新解析度也有目前的更新率就保留，否則用 60，再沒有就用最高的
+            List<int> rates = VirtualRates(r.Width, r.Height, 0);
+            int hz = rates.Contains(m.VirtualMode.RefreshRate) ? m.VirtualMode.RefreshRate : rates.Contains(60) ? 60 : rates.FirstOrDefault();
+            m.VirtualMode = new VideoMode(r.Width, r.Height, hz > 0 ? hz : m.VirtualMode.RefreshRate);
+            MarkEdited();
+            showing = true;
+            try
+            {
+                ShowVirtualRates(m.VirtualMode);
+            }
+            finally
+            {
+                showing = false;
+            }
+        }
+
+        /// <summary>潛行模式選取中且驅動不可用（或正在安裝）時，顯示警告與「安裝驅動」。</summary>
+        void ShowDriver()
+        {
+            if (IsDisposed) return;
+            bool remote = Selected is { IsRemote: true };
+            bool problem = driver.Running != null || (driver.Status is DriverStatus s && s.State != DriverState.Installed);
+            driverWarning.Visible = installDriver.Visible = remote && problem;
+            driverWarning.Text = driver.Running != null
+                ? "虛擬螢幕驅動：" + driver.StateText
+                : "虛擬螢幕驅動：" + driver.StateText + "，無法切換到潛行模式。";
+            installDriver.Enabled = driver.CanInstall;
+            driverDetail.Text = driver.DetailText;
+            driverDetail.Visible = remote && problem && driver.DetailText.Length > 0;
+        }
+
+        /// <summary>擷取按鈕：潛行模式不能被覆蓋；處於潛行模式（或切換中）時都停用，並說明原因。</summary>
+        void UpdateCapture()
+        {
+            string? blocked = app.CaptureBlocker;
+            captureButton.Enabled = blocked == null && Selected is { IsRemote: false };
+            captureNewButton.Enabled = blocked == null;
+            captureBlocked.Visible = app.InRemoteMode && Selected is { IsRemote: false };
+            string tip = app.InRemoteMode ? AppCoordinator.RemoteCaptureText : "";
+            tips.SetToolTip(captureButton, tip);
+            tips.SetToolTip(captureNewButton, tip);
         }
 
         void OnNameChanged()
@@ -328,6 +497,23 @@ namespace AutoDisplayMode.Settings
             FocusName();
         }
 
+        void AddRemoteMode()
+        {
+            ModeConfig m;
+            try
+            {
+                m = draft.AddRemoteMode();
+            }
+            catch (InvalidOperationException e)
+            {
+                MessageBox.Show(FindForm(), "無法新增潛行模式：" + e.Message + "。", FindForm()?.Text, MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            MarkEdited();
+            RefreshList(m.Id);
+            FocusName();
+        }
+
         void DuplicateMode()
         {
             if (Selected is not ModeConfig m) return;
@@ -351,10 +537,17 @@ namespace AutoDisplayMode.Settings
             }
 
             List<SwitchCondition> affected = draft.ConditionsReferencing(m.Id);
-            string text = "要刪除模式「" + label + "」嗎？";
+            List<SwitchCondition> retargeted = draft.BuiltInConditionsRetargetedBy(m.Id);
+            string text = "要刪除" + (m.IsRemote ? "潛行模式" : "模式") + "「" + label + "」嗎？";
             if (affected.Count > 0)
                 text += "\n\n以下切換條件的來源模式或目標模式是「" + label + "」，會一併刪除：\n" +
                         string.Concat(affected.Select(s => "・" + s.Describe(draft) + "\n"));
+            if (retargeted.Count > 0)
+            {
+                string fallback = draft.Modes.FirstOrDefault(x => !x.IsRemote && x.Id != m.Id) is ModeConfig f ? DisplayName(f) : "";
+                text += "\n\n以下內建切換條件的目標模式是「" + label + "」，會改成順序第一個一般模式「" + fallback + "」：\n" +
+                        string.Concat(retargeted.Select(s => "・" + s.Describe(draft) + "\n"));
+            }
             text += "\n按「套用」或「套用並關閉」後才會存檔。";
             if (MessageBox.Show(FindForm(), text, FindForm()?.Text, MessageBoxButtons.YesNo, MessageBoxIcon.Question,
                     MessageBoxDefaultButton.Button2) != DialogResult.Yes) return;
@@ -484,11 +677,17 @@ namespace AutoDisplayMode.Settings
         {
             if (IsDisposed) return;
             list.Invalidate();   // 目前模式可能從工作列改變
+            UpdateCapture();     // 進入或離開潛行模式
         }
 
         protected override void Dispose(bool disposing)
         {
-            if (disposing) app.Changed -= OnAppChanged;
+            if (disposing)
+            {
+                app.Changed -= OnAppChanged;
+                driver.Changed -= ShowDriver;
+                tips.Dispose();
+            }
             base.Dispose(disposing);
         }
 
@@ -502,7 +701,7 @@ namespace AutoDisplayMode.Settings
             using (var brush = new SolidBrush(ToColor(m.Color))) e.Graphics.FillRectangle(brush, swatch);
             e.Graphics.DrawRectangle(SystemPens.ControlDark, swatch);
 
-            string text = DisplayName(m) + (id == app.Config.CurrentModeId ? "（目前）" : "");
+            string text = DisplayName(m) + (m.IsRemote ? "（潛行）" : "") + (id == app.Config.CurrentModeId ? "（目前）" : "");
             var textBounds = new Rectangle(swatch.Right + 6, e.Bounds.Top, e.Bounds.Right - swatch.Right - 6, e.Bounds.Height);
             TextRenderer.DrawText(e.Graphics, text, e.Font ?? Font, textBounds, e.ForeColor,
                 TextFormatFlags.VerticalCenter | TextFormatFlags.Left | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);

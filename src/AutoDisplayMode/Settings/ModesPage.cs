@@ -150,7 +150,7 @@ namespace AutoDisplayMode.Settings
             Add(monitorsSummary);
             Add(captureButton);
             Add(captureNote);
-            Add(SmallHint("擷取的結果按「套用」或「確定」後才存檔，存入的模式隨即成為目前模式。"));
+            Add(SmallHint("擷取的結果按「套用」或「套用並關閉」後才存檔，存入的模式隨即成為目前模式。"));
 
             details = new Panel { Dock = DockStyle.Fill, AutoScroll = true, Margin = new Padding(0) };
             details.Controls.Add(detailsTable);
@@ -194,7 +194,7 @@ namespace AutoDisplayMode.Settings
             "・手動切換進入模式時，自動切換依模式的設定維持、開啟或關閉。例如手動切到省電時選「關閉」，就不會一動滑鼠又被切回來。\n\n" +
             "【擷取】\n" +
             "・「以目前螢幕狀態覆蓋此模式」把目前每台螢幕的狀態存進選取的模式；「以目前螢幕狀態新增模式」存成一個新模式。\n" +
-            "・按「套用」或「確定」後才存檔，存入的模式隨即成為目前模式，並重新開始計時。";
+            "・按「套用」或「套用並關閉」後才存檔，存入的模式隨即成為目前模式，並重新開始計時。";
 
         protected override void OnLoad(AppConfig d)
         {
@@ -355,7 +355,7 @@ namespace AutoDisplayMode.Settings
             if (affected.Count > 0)
                 text += "\n\n以下切換條件的來源模式或目標模式是「" + label + "」，會一併刪除：\n" +
                         string.Concat(affected.Select(s => "・" + s.Describe(draft) + "\n"));
-            text += "\n按「套用」或「確定」後才會存檔。";
+            text += "\n按「套用」或「套用並關閉」後才會存檔。";
             if (MessageBox.Show(FindForm(), text, FindForm()?.Text, MessageBoxButtons.YesNo, MessageBoxIcon.Question,
                     MessageBoxDefaultButton.Button2) != DialogResult.Yes) return;
 
@@ -447,7 +447,7 @@ namespace AutoDisplayMode.Settings
             string label = DisplayName(m);
             DialogResult r = MessageBox.Show(FindForm(),
                 "要以目前的螢幕狀態（每台螢幕的開關、座標、解析度、更新率、方向與主螢幕）覆蓋「" + label + "」的螢幕設定嗎？\n\n" +
-                "目前沒接上的螢幕維持原本的設定。按「套用」或「確定」後才會存檔，「" + label + "」也會成為目前模式。",
+                "目前沒接上的螢幕維持原本的設定。按「套用」或「套用並關閉」後才會存檔，「" + label + "」也會成為目前模式。",
                 FindForm()?.Text, MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button2);
             if (r != DialogResult.Yes) return;
 

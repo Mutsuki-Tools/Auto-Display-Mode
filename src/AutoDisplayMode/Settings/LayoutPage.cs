@@ -203,7 +203,7 @@ namespace AutoDisplayMode.Settings
             warnings = Message(Color.DarkGoldenrod);
             previewButton = new Button { Text = "預覽套用", AutoSize = true, Anchor = AnchorStyles.Right, Margin = new Padding(12, 6, 0, 0) };
             previewButton.Click += delegate { Preview(); };
-            Label previewHint = Hint("「預覽套用」立即套用這個模式目前編輯中的螢幕設定，15 秒內沒有按「保留變更」就還原。保留後仍要按「套用」或「確定」才會存檔。");
+            Label previewHint = Hint("「預覽套用」立即套用這個模式目前編輯中的螢幕設定，15 秒內沒有按「保留變更」就還原。保留後仍要按「套用」或「套用並關閉」才會存檔。");
             previewHint.Anchor = AnchorStyles.Left;
             previewHint.Margin = new Padding(3, 6, 3, 0);
 
@@ -266,7 +266,7 @@ namespace AutoDisplayMode.Settings
             "・未接上的螢幕與其他螢幕重疊時，清單標出【重疊】，要刪除或對應後才能套用。\n\n" +
             "【預覽套用】\n" +
             "・立即套用這個模式編輯中的螢幕設定，15 秒內沒有按「保留變更」就還原。\n" +
-            "・預覽不改變目前模式；保留後仍要按「套用」或「確定」才會存檔。";
+            "・預覽不改變目前模式；保留後仍要按「套用」或「套用並關閉」才會存檔。";
 
         protected override void OnLoad(AppConfig d)
         {

@@ -6,7 +6,7 @@ using AutoDisplayMode.Core;
 namespace AutoDisplayMode.Settings
 {
     /// <summary>
-    /// 設定視窗：各分頁修改暫存在視窗內的設定副本，按「套用」或「確定」才交給協調者寫入 cfg，按「取消」則放棄。
+    /// 設定視窗：各分頁修改暫存在視窗內的設定副本，按「套用」或「套用並關閉」才交給協調者寫入 cfg，按「取消」則放棄。
     /// 左下角「說明」（或 F1）顯示目前分頁的說明（<see cref="SettingsPage.HelpText"/>），右邊在有未套用的變更時顯示提醒；
     /// 有未套用的變更時，按「取消」或 ✕ 先確認是否放棄。
     /// 開啟與關閉時通知協調者（暫停／恢復沒勾強制的切換條件）由 <see cref="TrayApp"/> 負責。
@@ -40,7 +40,7 @@ namespace AutoDisplayMode.Settings
             ClientSize = new Size(640, 580);   // 模式分頁不需捲動
             MinimumSize = new Size(480, 360);
 
-            var ok = DialogButton("確定");
+            var ok = DialogButton("套用並關閉");
             var cancel = DialogButton("取消");
             applyButton = DialogButton("套用");
             applyButton.Enabled = false;
@@ -73,7 +73,11 @@ namespace AutoDisplayMode.Settings
                 WrapContents = false,   // 在表格的自動寬度欄中不換行
                 Margin = new Padding(0),
             };
-            buttons.Controls.AddRange(new Control[] { applyButton, cancel, ok });   // 由右到左：套用、取消、確定
+            buttons.Controls.AddRange(new Control[] { ok, applyButton, cancel });   // 由右到左加入，畫面上由左到右是：取消、套用、套用並關閉
+            // Tab 鍵也由左到右
+            cancel.TabIndex = 0;
+            applyButton.TabIndex = 1;
+            ok.TabIndex = 2;
 
             // 左下角「說明」：顯示目前分頁的說明（F1 也可以，見 OnHelpRequested）
             var help = DialogButton("說明");
@@ -145,7 +149,7 @@ namespace AutoDisplayMode.Settings
 
         /// <summary>
         /// 使用者按「取消」、✕ 或 Esc 關閉時，有未套用的變更就先確認；選「否」留在設定視窗。
-        /// 「確定」會先套用（成功後沒有未套用的變更），Windows 關機與程式結束時不確認。
+        /// 「套用並關閉」會先套用（成功後沒有未套用的變更），Windows 關機與程式結束時不確認。
         /// </summary>
         protected override void OnFormClosing(FormClosingEventArgs e)
         {

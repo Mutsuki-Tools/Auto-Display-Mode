@@ -373,7 +373,7 @@ namespace AutoDisplayMode.Core
             return null;
         }
 
-        /// <summary>保留預覽套用的螢幕狀態（不存檔；按「套用」或「確定」才存入模式）。</summary>
+        /// <summary>保留預覽套用的螢幕狀態（不存檔；按「套用」或「套用並關閉」才存入模式）。</summary>
         public void KeepPreview()
         {
             if (!previewApplied) return;

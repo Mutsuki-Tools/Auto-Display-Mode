@@ -400,7 +400,7 @@ namespace AutoDisplayMode.Core
             Line("AutoSwitch=" + Bool(c.AutoSwitch));
             Line("# 目前模式（填下方某個 [Mode.N] 的 N）");
             Line("CurrentMode=" + Int(c.CurrentModeId));
-            Line("# 復原模式（填某個一般模式的 N）：最後一個處於過的一般模式，由程式自動更新。");
+            Line("# 復原模式（填某個一般模式的 N）：最近一次所在的一般模式，由程式自動更新。");
             Line("# 程式啟動時目前模式是潛行模式、虛擬螢幕意外消失時，改套用這個模式；不存在時用順序第一個一般模式");
             Line("RestoreMode=" + Int(c.RestoreModeId));
             Line("# 滑鼠要移動超過幾個像素才算使用（1~1000，過濾桌面震動造成的微小位移）");

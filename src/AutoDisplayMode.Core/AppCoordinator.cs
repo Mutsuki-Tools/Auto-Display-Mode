@@ -650,7 +650,7 @@ namespace AutoDisplayMode.Core
             if (done.Kind == SwitchKind.Preview && previewApplied) PreviewApplied?.Invoke();
         }
 
-        /// <summary>目前模式改為 <paramref name="mode"/>；一般模式同時成為復原模式（最後一個處於過的一般模式）。</summary>
+        /// <summary>目前模式改為 <paramref name="mode"/>；一般模式同時成為復原模式（最近一次所在的一般模式）。</summary>
         void SetCurrentMode(ModeConfig mode)
         {
             config.CurrentModeId = mode.Id;

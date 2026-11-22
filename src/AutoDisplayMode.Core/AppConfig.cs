@@ -16,7 +16,7 @@ namespace AutoDisplayMode.Core
         public int CurrentModeId { get; set; }
 
         /// <summary>
-        /// 復原模式的模式編號：最後一個處於過的一般模式。離開潛行模式若不是經由切換（例如程式啟動時、虛擬螢幕意外消失），
+        /// 復原模式的模式編號：最近一次所在的一般模式。離開潛行模式若不是經由切換（例如程式啟動時、虛擬螢幕意外消失），
         /// 一律回到復原模式。不存在或不是一般模式時改用順序第一個一般模式（見 <see cref="RestoreTarget"/>）。
         /// </summary>
         public int RestoreModeId { get; set; }

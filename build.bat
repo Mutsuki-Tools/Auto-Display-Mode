@@ -3,7 +3,8 @@ setlocal
 
 rem Build AutoDisplayMode.exe with the .NET SDK, run the tests, and copy the exe and the driver files to release\.
 rem The exe targets .NET Framework 4.8 (built into Windows 10/11), so no extra runtime is needed to run it.
-rem release\ is the portable program folder: AutoDisplayMode.exe, AutoDisplayMode.cfg (kept in git) and drivers\sudovda\.
+rem release\ is the portable program folder: AutoDisplayMode.exe, drivers\sudovda\, README.md (from docs\release\)
+rem and AutoDisplayMode.cfg (kept in git; the program creates it on first run). Deleting release\ and building again restores everything but the cfg.
 
 where dotnet >nul 2>nul
 if errorlevel 1 goto NODOTNET
@@ -33,6 +34,10 @@ copy /y "%DRV%\AutoDisplayMode-SudoVDA.cer" "%RELDRV%\" >nul
 if errorlevel 1 goto DRVFAIL
 copy /y "%DRV%\LICENSE.txt" "%RELDRV%\" >nul
 if errorlevel 1 goto DRVFAIL
+
+rem User guide for people who only get the release folder.
+copy /y "%~dp0docs\release\README.md" "%REL%\README.md" >nul
+if errorlevel 1 goto READMEFAIL
 
 rem Older builds copied the exe to the project root: remove the leftover copy.
 if exist "%~dp0AutoDisplayMode.exe" del "%~dp0AutoDisplayMode.exe" >nul 2>nul
@@ -70,5 +75,11 @@ exit /b 1
 :DRVFAIL
 echo.
 echo Could not copy the driver files from %DRV% to %RELDRV%
+if "%~1"=="" pause
+exit /b 1
+
+:READMEFAIL
+echo.
+echo Could not copy %~dp0docs\release\README.md to %REL%\README.md
 if "%~1"=="" pause
 exit /b 1

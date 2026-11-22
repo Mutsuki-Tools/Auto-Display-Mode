@@ -3,3 +3,5 @@ drivers/sudovda/x64/** -text
 drivers/sudovda/*.cer -text
 # bash 腳本一律 LF
 *.sh text eol=lf
+# 批次檔一律 CRLF（cmd 遇到只有 LF 的批次檔，goto 標籤可能找不到）
+*.bat text eol=crlf

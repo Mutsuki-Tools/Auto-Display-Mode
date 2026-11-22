@@ -1,7 +1,6 @@
 # 程式資料夾：build.bat 把 exe 與驅動檔的複本放進 release/，只有 cfg 納入 git
 /release/*
 /Auto Display Mode/*
-!/release/AutoDisplayMode.cfg
 
 # 舊版 build.bat 複製到專案根目錄的 exe
 /AutoDisplayMode.exe

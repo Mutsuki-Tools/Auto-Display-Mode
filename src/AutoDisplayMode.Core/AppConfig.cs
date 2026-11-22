@@ -21,6 +21,12 @@ namespace AutoDisplayMode.Core
         /// </summary>
         public int RestoreModeId { get; set; }
 
+        /// <summary>
+        /// 復原模式之前所在的一般模式的模式編號（復原模式換成另一個一般模式時，原本的復原模式記到這裡）；沒有時為 0。
+        /// 「回到上個配置」的實際目標由它與復原模式決定（見 <see cref="PreviousNormalMode"/>）。
+        /// </summary>
+        public int PreviousModeId { get; set; }
+
         // 一般設定的範圍：設定視窗的欄位與讀取 cfg 時的正規化共用
         public const int MinMouseMoveThreshold = 1, MaxMouseMoveThreshold = 1000;
         public const double MinAudioThreshold = 0, MaxAudioThreshold = 1, DefaultAudioThreshold = 0.005;
@@ -57,6 +63,32 @@ namespace AutoDisplayMode.Core
         public ModeConfig? RestoreTarget() =>
             FindMode(RestoreModeId) is ModeConfig m && !m.IsRemote ? m : FirstNormalMode;
 
+        /// <summary>
+        /// 上一個一般模式：最近一次所在、而且不是目前模式的一般模式，也就是「回到上個配置」的實際目標。
+        /// 處於潛行模式時是復原模式；處於一般模式時是復原模式之前的一般模式（<see cref="PreviousModeId"/>）。
+        /// 不存在時改用順序第一個一般模式；它就是目前模式時為 null（不切換）。
+        /// </summary>
+        public ModeConfig? PreviousNormalMode()
+        {
+            int id = CurrentModeConfig is { IsRemote: false } && CurrentModeId == RestoreModeId ? PreviousModeId : RestoreModeId;
+            ModeConfig? m = FindMode(id) is { IsRemote: false } found && found.Id != CurrentModeId ? found : FirstNormalMode;
+            return m?.Id == CurrentModeId ? null : m;
+        }
+
+        /// <summary>
+        /// 記錄進入一般模式 <paramref name="modeId"/>：它成為復原模式；原本的復原模式是另一個一般模式時，記為復原模式之前的一般模式
+        /// （<see cref="PreviousModeId"/>）。
+        /// </summary>
+        public void RecordNormalMode(int modeId)
+        {
+            if (modeId == RestoreModeId) return;
+            PreviousModeId = RestoreModeId;
+            RestoreModeId = modeId;
+        }
+
+        /// <summary>切換條件 <paramref name="s"/> 現在的實際目標模式：「回到上個配置」時是 <see cref="PreviousNormalMode"/>；不存在時為 null。</summary>
+        public ModeConfig? TargetOf(SwitchCondition s) => s.ToPrevious ? PreviousNormalMode() : FindMode(s.ToModeId);
+
         /// <summary>新模式的編號：目前最大的編號 + 1（沒有模式時為 1）。</summary>
         public int NextModeId() => Modes.Count == 0 ? 1 : Modes.Max(m => m.Id) + 1;
 
@@ -71,21 +103,21 @@ namespace AutoDisplayMode.Core
 
         /// <summary>
         /// 新增一個潛行模式（名稱不重複、配一個未使用的顏色、虛擬螢幕 1920×1080@60），
-        /// 並在切換條件清單最後加上它的內建切換條件（目標為順序第一個一般模式）。回傳新模式。
+        /// 並在切換條件清單最後加上它的內建切換條件（目標為「回到上個配置」）。回傳新模式。
         /// </summary>
         public ModeConfig AddRemoteMode(string baseName = "潛行模式")
         {
-            ModeConfig target = FirstNormalMode ?? throw new InvalidOperationException(LastNormalModeText);
+            if (FirstNormalMode == null) throw new InvalidOperationException(LastNormalModeText);
             var mode = new ModeConfig(NextModeId(), UniqueModeName(baseName), ModeKind.Remote);
             Modes.Add(mode);
             ModeConfig.AssignMissingColors(Modes);
-            SwitchConditions.Add(SwitchCondition.BuiltInFor(mode.Id, target.Id));
+            SwitchConditions.Add(SwitchCondition.BuiltInFor(mode.Id, SwitchCondition.PreviousTarget));
             return mode;
         }
 
         /// <summary>
         /// 複製模式 <paramref name="modeId"/>：新的編號、名稱與未使用的顏色，其餘設定與螢幕設定相同（清單各自獨立），種類也相同。
-        /// 切換條件不複製；但複製潛行模式時，新的潛行模式在清單最後加上自己的內建切換條件（目標與原本的相同）。回傳新模式。
+        /// 切換條件不複製；但複製潛行模式時，新的潛行模式在清單最後加上自己的內建切換條件（目標為「回到上個配置」）。回傳新模式。
         /// </summary>
         public ModeConfig DuplicateMode(int modeId)
         {
@@ -94,13 +126,7 @@ namespace AutoDisplayMode.Core
             copy.Color = ModeConfig.NoColor;
             Modes.Add(copy);
             ModeConfig.AssignMissingColors(Modes);
-            if (copy.IsRemote)
-            {
-                int target = BuiltInConditionOf(source.Id) is SwitchCondition s && FindMode(s.ToModeId) is { IsRemote: false }
-                    ? s.ToModeId
-                    : FirstNormalMode?.Id ?? 0;
-                SwitchConditions.Add(SwitchCondition.BuiltInFor(copy.Id, target));
-            }
+            if (copy.IsRemote) SwitchConditions.Add(SwitchCondition.BuiltInFor(copy.Id, SwitchCondition.PreviousTarget));
             return copy;
         }
 
@@ -183,7 +209,8 @@ namespace AutoDisplayMode.Core
         }
 
         /// <summary>
-        /// 依清單順序把模式重新編號為 1、2、3…（cfg 的 [Mode.N] 跟著順序），切換條件的來源與目標模式、目前模式跟著改。
+        /// 依清單順序把模式重新編號為 1、2、3…（cfg 的 [Mode.N] 跟著順序），切換條件的來源與目標模式、目前模式、
+        /// 復原模式與復原模式之前的一般模式跟著改（「回到上個配置」不指向模式編號，不受影響）。
         /// </summary>
         internal void RenumberModes()
         {
@@ -199,6 +226,7 @@ namespace AutoDisplayMode.Core
             }
             CurrentModeId = New(CurrentModeId);
             RestoreModeId = New(RestoreModeId);
+            PreviousModeId = New(PreviousModeId);
         }
 
         // ---- 切換條件 ----
@@ -213,7 +241,7 @@ namespace AutoDisplayMode.Core
                 : null;
 
         /// <summary>
-        /// 驗證並修正內建切換條件（讀取 cfg 時）：每個潛行模式剛好一條、來源模式是自己、條件與強制固定、目標是一般模式。
+        /// 驗證並修正內建切換條件（讀取 cfg 時）：每個潛行模式剛好一條、來源模式是自己、條件與強制固定、目標是一般模式或「回到上個配置」。
         /// 來源不是潛行模式或重複的刪除，鎖定的欄位改回固定值，目標失效時改成順序第一個一般模式，缺少的加在清單最後。
         /// 回傳修正的說明（每件事一句）；沒有一般模式時不修正（由呼叫端先補上一般模式）。
         /// </summary>
@@ -243,7 +271,7 @@ namespace AutoDisplayMode.Core
                     notes.Add("已將" + Name(s.FromModeId) + "的內建切換條件改回固定的條件（偵測到使用、鍵盤滑鼠、強制）。");
                     s = SwitchCondition.BuiltInFor(s.FromModeId, s.ToModeId);
                 }
-                if (FindMode(s.ToModeId) is not { IsRemote: false })
+                if (!s.ToPrevious && FindMode(s.ToModeId) is not { IsRemote: false })
                 {
                     notes.Add(Name(s.FromModeId) + "的內建切換條件的目標模式不存在或不是一般模式，已改成" + Name(fallback.Id) + "。");
                     s = s with { ToModeId = fallback.Id };
@@ -341,6 +369,7 @@ namespace AutoDisplayMode.Core
                 AutoSwitch = AutoSwitch,
                 CurrentModeId = CurrentModeId,
                 RestoreModeId = RestoreModeId,
+                PreviousModeId = PreviousModeId,
                 MouseMoveThreshold = MouseMoveThreshold,
                 AudioThreshold = AudioThreshold,
                 AudioSeconds = AudioSeconds,

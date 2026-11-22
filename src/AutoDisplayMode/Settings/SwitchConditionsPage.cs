@@ -16,6 +16,8 @@ namespace AutoDisplayMode.Settings
         const int FromCol = 0, KindCol = 1, AmountCol = 2, UnitCol = 3, MouseCol = 4, AudioCol = 5, ToCol = 6, ForcedCol = 7;
         const string ForcedTip = "勾選後，即使自動切換關閉、設定視窗開著，這條也照樣生效";
         const string BuiltInTip = "潛行模式的內建切換條件：條件固定為偵測到使用（只認實體鍵盤滑鼠）且強制，只能改目標模式，不能刪除";
+        const string PreviousTip = "「" + SwitchCondition.PreviousTargetText + "」：切回最近一次所在、而且不是目前模式的一般模式" +
+                                   "（處於潛行模式時，就是進入潛行模式前的一般模式）";
 
         readonly AppCoordinator app;
         readonly DataGridView grid;
@@ -39,8 +41,8 @@ namespace AutoDisplayMode.Settings
             this.app = app;
 
             fromColumn = ComboColumn("來源模式", 100);
-            toColumn = ComboColumn("目標模式", 100);
-            var kindColumn = ChoiceColumn("條件", 95,
+            toColumn = ComboColumn("目標模式", 118);   // 放得下「回到上個配置」
+            var kindColumn = ChoiceColumn("條件", 85,
                 new Choice((int)SwitchConditionKind.Idle, "閒置"),
                 new Choice((int)SwitchConditionKind.UsageDetected, "偵測到使用"));
             var amountColumn = new DataGridViewTextBoxColumn { HeaderText = "閒置時間", FillWeight = 70, MaxInputLength = 9 };
@@ -49,8 +51,8 @@ namespace AutoDisplayMode.Settings
                 new Choice((int)IdleUnit.Minutes, "分鐘"),
                 new Choice((int)IdleUnit.Hours, "小時"));
             // 兩個使用來源欄等寬
-            var mouseColumn = new DataGridViewCheckBoxColumn { HeaderText = "鍵盤滑鼠", FillWeight = 62 };
-            var audioColumn = new DataGridViewCheckBoxColumn { HeaderText = "聲音", FillWeight = 62 };
+            var mouseColumn = new DataGridViewCheckBoxColumn { HeaderText = "鍵盤滑鼠", FillWeight = 66 };
+            var audioColumn = new DataGridViewCheckBoxColumn { HeaderText = "聲音", FillWeight = 66 };
             var forcedColumn = new DataGridViewCheckBoxColumn { HeaderText = "強制", FillWeight = 45, ToolTipText = ForcedTip };
 
             grid = new DataGridView
@@ -129,7 +131,8 @@ namespace AutoDisplayMode.Settings
                 "閒置：所選的使用來源全部都沒有使用，持續指定的時間。\n" +
                 "偵測到使用：所選的使用來源任一個出現使用就成立。\n" +
                 "強制：" + ForcedTip + "。\n" +
-                "（內建）：潛行模式自帶的切換條件，只能改目標模式，不能刪除。");
+                "（內建）：潛行模式自帶的切換條件，只能改目標模式，不能刪除。\n" +
+                "目標模式" + PreviousTip + "。");
             usage.Margin = new Padding(3, 6, 3, 0);
             root.Controls.Add(usage, 0, 4);
             Controls.Add(root);
@@ -143,12 +146,18 @@ namespace AutoDisplayMode.Settings
             "・自動切換關閉時（右鍵選單「自動切換」），只檢查有勾「強制」的切換條件。\n" +
             "・強制：勾選後，即使自動切換關閉、設定視窗開著，這條也照樣生效（預設不勾）。\n" +
             "・潛行模式也能當來源模式與目標模式，例如「閒置 30 分鐘 → 潛行」。\n\n" +
+            "【回到上個配置】\n" +
+            "・目標模式的第一個選項。切換時才決定要回到哪個模式：最近一次所在、而且不是目前模式的一般模式。\n" +
+            "・處於潛行模式時，就是進入潛行模式前的一般模式（潛行模式之間切換過也一樣）。\n" +
+            "・處於一般模式時，是在它之前所在的一般模式，例如「遊玩 → 省電」後回到「遊玩」；中間經過潛行模式不算。\n" +
+            "・還沒有上一個一般模式（或它被刪除）時，改用順序第一個一般模式；那就是目前模式時不切換。\n" +
+            "・任何來源模式都能選，內建切換條件也能選；重新排序或刪除模式都不影響它。\n\n" +
             "【內建切換條件】\n" +
             "・每個潛行模式自帶一條，來源模式標示「（內建）」：處於該潛行模式時偵測到使用（鍵盤滑鼠）就切換到目標模式，人回到電腦前一動滑鼠就換回實體螢幕。\n" +
             "・只認實體鍵盤滑鼠：不管一般設定的「忽略遠端連線軟體送出的鍵盤滑鼠輸入」，在 Chrome 遠端桌面裡操作都不會離開潛行模式。\n" +
-            "・一律強制，條件與使用來源鎖定；只能改目標模式（只能選一般模式，預設是順序第一個一般模式）。\n" +
+            "・一律強制，條件與使用來源鎖定；只能改目標模式（只能選一般模式或「回到上個配置」，新增或複製潛行模式時預設是「回到上個配置」）。\n" +
             "・不能刪除；新增潛行模式時加在清單最後，刪除潛行模式時一起刪除。可以和其他切換條件一起調整順序。\n" +
-            "・目標模式被刪除時，改成順序第一個一般模式，並在套用時提示。\n\n" +
+            "・目標模式被刪除時，改成順序第一個一般模式，並在套用時提示（「回到上個配置」不會失效）。\n\n" +
             "【條件】\n" +
             "・閒置：所選的使用來源全部都沒有使用，持續指定的分鐘或小時。\n" +
             "・偵測到使用：所選的使用來源任一個出現使用就成立。\n" +
@@ -184,20 +193,19 @@ namespace AutoDisplayMode.Settings
                 grid.CancelEdit();
                 grid.Rows.Clear();
 
-                // 下拉選單依副本中的模式重建（反映模式分頁的新增、刪除、改名）
+                // 下拉選單依副本中的模式重建（反映模式分頁的新增、刪除、改名）；目標模式的第一個選項是「回到上個配置」
                 var modes = draft.Modes.Select(m => new Choice(m.Id, DisplayName(m))).ToList();
                 foreach (SwitchCondition s in draft.SwitchConditions)
                 {
                     foreach (int id in new[] { s.FromModeId, s.ToModeId })
                     {
-                        if (modes.All(c => c.Value != id)) modes.Add(new Choice(id, "（不存在的模式 " + id + "）"));
+                        if (id != SwitchCondition.PreviousTarget && modes.All(c => c.Value != id)) modes.Add(new Choice(id, "（不存在的模式 " + id + "）"));
                     }
                 }
-                foreach (DataGridViewComboBoxColumn c in new[] { fromColumn, toColumn })
-                {
-                    c.Items.Clear();
-                    c.Items.AddRange(modes.Cast<object>().ToArray());
-                }
+                fromColumn.Items.Clear();
+                fromColumn.Items.AddRange(modes.Cast<object>().ToArray());
+                toColumn.Items.Clear();
+                toColumn.Items.AddRange(new[] { PreviousChoice }.Concat(modes).Cast<object>().ToArray());
 
                 for (int i = 0; i < draft.SwitchConditions.Count; i++)
                 {
@@ -259,8 +267,8 @@ namespace AutoDisplayMode.Settings
         }
 
         /// <summary>
-        /// 內建切換條件：來源模式標示「（內建）」，條件、使用來源與強制鎖定，目標模式只能選一般模式。
-        /// 一般的切換條件：來源模式與目標模式可選任何模式（包括潛行模式）。
+        /// 內建切換條件：來源模式標示「（內建）」，條件、使用來源與強制鎖定，目標模式只能選一般模式或「回到上個配置」。
+        /// 一般的切換條件：來源模式與目標模式可選任何模式（包括潛行模式）或「回到上個配置」。
         /// </summary>
         void ShowBuiltIn(DataGridViewRow row, SwitchCondition s)
         {
@@ -270,7 +278,7 @@ namespace AutoDisplayMode.Settings
             {
                 string fromName = draft.FindMode(s.FromModeId) is ModeConfig m ? DisplayName(m) : "模式 " + s.FromModeId;
                 SetItems(from, new[] { new Choice(s.FromModeId, fromName + "（內建）") });
-                var targets = draft.Modes.Where(x => !x.IsRemote).Select(x => new Choice(x.Id, DisplayName(x))).ToList();
+                var targets = new[] { PreviousChoice }.Concat(draft.Modes.Where(x => !x.IsRemote).Select(x => new Choice(x.Id, DisplayName(x)))).ToList();
                 if (targets.All(c => c.Value != s.ToModeId))
                     targets.Add(new Choice(s.ToModeId, draft.FindMode(s.ToModeId) is ModeConfig t ? DisplayName(t) + "（潛行模式不能當目標）" : "（不存在的模式 " + s.ToModeId + "）"));
                 SetItems(to, targets);
@@ -290,8 +298,10 @@ namespace AutoDisplayMode.Settings
                 if (cell is DataGridViewComboBoxCell combo)
                     combo.DisplayStyle = s.BuiltIn ? DataGridViewComboBoxDisplayStyle.Nothing : DataGridViewComboBoxDisplayStyle.DropDownButton;
             }
-            to.ToolTipText = s.BuiltIn ? "內建切換條件的目標只能是一般模式" : "";
+            to.ToolTipText = (s.BuiltIn ? "內建切換條件的目標只能是一般模式或「" + SwitchCondition.PreviousTargetText + "」。\n" : "") + PreviousTip;
         }
+
+        static readonly Choice PreviousChoice = new(SwitchCondition.PreviousTarget, SwitchCondition.PreviousTargetText);
 
         /// <summary>只在選項不同時改寫儲存格自己的下拉選項（改寫會打斷正在編輯的儲存格）。</summary>
         static void SetItems(DataGridViewComboBoxCell cell, IEnumerable<Choice> choices)

@@ -50,8 +50,20 @@ namespace AutoDisplayMode.Core
 
         public UsageSources Sources { get; init; } = UsageSources.MouseKeyboard;
 
-        /// <summary>目標模式的 ID。</summary>
+        /// <summary>目標模式的模式編號；<see cref="PreviousTarget"/> 表示「回到上個配置」。</summary>
         public int ToModeId { get; init; }
+
+        /// <summary>
+        /// <see cref="ToModeId"/> 的特殊值：目標模式「回到上個配置」，切換時才決定實際的目標（<see cref="AppConfig.PreviousNormalMode"/>）。
+        /// 不指向模式編號，所以重新編號與刪除模式都不影響它。cfg 寫成 <c>To=Previous</c>。
+        /// </summary>
+        public const int PreviousTarget = -1;
+
+        /// <summary>目標模式是「回到上個配置」。</summary>
+        public bool ToPrevious => ToModeId == PreviousTarget;
+
+        /// <summary>介面上「回到上個配置」的文字（GLOSSARY 的「上一個一般模式」）。</summary>
+        public const string PreviousTargetText = "回到上個配置";
 
         /// <summary>強制：即使自動切換關閉、設定視窗開著，這條切換條件照樣生效。</summary>
         public bool Forced { get; init; }
@@ -61,7 +73,7 @@ namespace AutoDisplayMode.Core
         /// </summary>
         public bool BuiltIn { get; init; }
 
-        /// <summary>潛行模式 <paramref name="remoteModeId"/> 的內建切換條件，目標模式為 <paramref name="targetModeId"/>。</summary>
+        /// <summary>潛行模式 <paramref name="remoteModeId"/> 的內建切換條件，目標模式為 <paramref name="targetModeId"/>（可以是 <see cref="PreviousTarget"/>）。</summary>
         public static SwitchCondition BuiltInFor(int remoteModeId, int targetModeId) => new()
         {
             FromModeId = remoteModeId,
@@ -94,12 +106,12 @@ namespace AutoDisplayMode.Core
         {
             ModeConfig? from = config.FindMode(FromModeId), to = config.FindMode(ToModeId);
             if (from == null) return "來源模式不存在";
-            if (to == null) return "目標模式不存在";
+            if (to == null && !ToPrevious) return "目標模式不存在";
             if (FromModeId == ToModeId) return "來源模式與目標模式相同";
             if (BuiltIn)
             {
                 if (!from.IsRemote) return "內建切換條件的來源模式必須是潛行模式";
-                if (to.IsRemote) return "內建切換條件的目標模式必須是一般模式";
+                if (to is { IsRemote: true }) return "內建切換條件的目標模式必須是一般模式";
                 if (!HasBuiltInFields) return "內建切換條件的條件固定為偵測到使用（鍵盤滑鼠）且強制";
             }
             if ((Sources & (UsageSources.MouseKeyboard | UsageSources.Audio)) == 0) return "未選任何使用來源";
@@ -108,10 +120,12 @@ namespace AutoDisplayMode.Core
         }
 
         /// <summary>
-        /// 給人看的描述，例如「遊玩」閒置 5 分鐘（鍵盤滑鼠、聲音）→「省電」；有勾強制時結尾加上「（強制）」，內建切換條件加上「（內建）」。
+        /// 給人看的描述，例如「遊玩」閒置 5 分鐘（鍵盤滑鼠、聲音）→「省電」、「潛行」偵測到使用（鍵盤滑鼠）→ 回到上個配置；
+        /// 有勾強制時結尾加上「（強制）」，內建切換條件加上「（內建）」。
         /// </summary>
         public string Describe(AppConfig config) =>
-            "「" + ModeName(config, FromModeId) + "」" + DescribeCondition() + "（" + DescribeSources() + "）→「" + ModeName(config, ToModeId) + "」" +
+            "「" + ModeName(config, FromModeId) + "」" + DescribeCondition() + "（" + DescribeSources() + "）→" +
+            (ToPrevious ? " " + PreviousTargetText : "「" + ModeName(config, ToModeId) + "」") +
             (BuiltIn ? "（內建）" : Forced ? "（強制）" : "");
 
         /// <summary>條件部分的描述，例如「閒置 5 分鐘」「偵測到使用」。</summary>

@@ -16,18 +16,17 @@ namespace AutoDisplayMode.Core.Tests
         // ---- 新增、複製 ----
 
         [Fact]
-        public void 新增潛行模式時在切換條件最後加上內建切換條件_目標為第一個一般模式()
+        public void 新增潛行模式時在切換條件最後加上內建切換條件_目標為回到上個配置()
         {
             var h = Modes(Play, Sw.Idle(Play, Save, 5));
             AppConfig draft = h.App.Config.Clone();
-            draft.MoveMode(0, 2);   // 第一個一般模式變成「省電」
 
             ModeConfig remote = draft.AddRemoteMode();
 
             Assert.Equal(("潛行模式", ModeKind.Remote, VirtualDisplayModes.Default), (remote.Name, remote.Kind, remote.VirtualMode));
             SwitchCondition s = draft.SwitchConditions.Last();
             Assert.Equal(2, draft.SwitchConditions.Count);
-            Assert.Equal((true, remote.Id, Save, true), (s.BuiltIn, s.FromModeId, s.ToModeId, s.Forced));
+            Assert.Equal((true, remote.Id, Sw.Previous, true), (s.BuiltIn, s.FromModeId, s.ToModeId, s.Forced));
             Assert.Equal((SwitchConditionKind.UsageDetected, UsageSources.MouseKeyboard), (s.Kind, s.Sources));
             Assert.Equal("潛行模式 2", draft.AddRemoteMode().Name);
         }
@@ -46,11 +45,11 @@ namespace AutoDisplayMode.Core.Tests
             ModeConfig m = reread.FindMode(4)!;
             Assert.Equal(("遠端用", ModeKind.Remote, new VideoMode(2560, 1440, 120)), (m.Name, m.Kind, m.VirtualMode));
             Assert.Empty(m.Monitors);
-            Assert.Equal(SwitchCondition.BuiltInFor(4, Play), Assert.Single(reread.SwitchConditions));
+            Assert.Equal(SwitchCondition.BuiltInFor(4, Sw.Previous), Assert.Single(reread.SwitchConditions));
         }
 
         [Fact]
-        public void 複製潛行模式得到潛行模式_並有自己的內建切換條件()
+        public void 複製潛行模式得到潛行模式_並有自己的內建切換條件_目標為回到上個配置()
         {
             var h = WithRemote(Play);
             AppConfig draft = h.App.Config.Clone();
@@ -61,7 +60,7 @@ namespace AutoDisplayMode.Core.Tests
             ModeConfig copy = draft.DuplicateMode(Remote);
 
             Assert.Equal(("潛行 的複本", ModeKind.Remote, new VideoMode(1280, 720, 30)), (copy.Name, copy.Kind, copy.VirtualMode));
-            Assert.Equal(SwitchCondition.BuiltInFor(copy.Id, Save), draft.SwitchConditions.Last());
+            Assert.Equal(SwitchCondition.BuiltInFor(copy.Id, Sw.Previous), draft.SwitchConditions.Last());
             Assert.Null(h.App.ApplySettings(draft));
         }
 

@@ -241,15 +241,20 @@ namespace AutoDisplayMode.Core.Tests
         public const UsageSources Audio = UsageSources.Audio;
         /// <summary>兩種使用來源都選。</summary>
         public const UsageSources Both = UsageSources.MouseKeyboard | UsageSources.Audio;
+        /// <summary>目標模式「回到上個配置」（cfg 寫 To=Previous）。</summary>
+        public const int Previous = SwitchCondition.PreviousTarget;
 
         public static string Idle(int from, int to, int amount, UsageSources sources = MouseOrKeyboard, IdleUnit unit = IdleUnit.Minutes,
             bool forced = false) =>
             Harness.Cfg("From=" + from, "Condition=Idle", "IdleTime=" + amount, "IdleUnit=" + unit,
-                "MouseKeyboard=" + Flag(sources, MouseOrKeyboard), "Audio=" + Flag(sources, Audio), "To=" + to) + Forced(forced);
+                "MouseKeyboard=" + Flag(sources, MouseOrKeyboard), "Audio=" + Flag(sources, Audio), To(to)) + Forced(forced);
 
         public static string Usage(int from, int to, UsageSources sources = MouseOrKeyboard, bool forced = false) =>
             Harness.Cfg("From=" + from, "Condition=UsageDetected",
-                "MouseKeyboard=" + Flag(sources, MouseOrKeyboard), "Audio=" + Flag(sources, Audio), "To=" + to) + Forced(forced);
+                "MouseKeyboard=" + Flag(sources, MouseOrKeyboard), "Audio=" + Flag(sources, Audio), To(to)) + Forced(forced);
+
+        /// <summary>cfg 的 To= 行（<see cref="Previous"/> 寫成 To=Previous）。</summary>
+        public static string To(int to) => "To=" + (to == Previous ? "Previous" : to.ToString());
 
         /// <summary>有勾強制時寫 Forced=1；沒勾時不寫（與舊 cfg 相同，應當成 0）。</summary>
         static string Forced(bool forced) => forced ? Harness.Cfg("Forced=1") : "";
@@ -349,10 +354,12 @@ namespace AutoDisplayMode.Core.Tests
         /// <summary>
         /// <see cref="Modes"/> 再加上兩個潛行模式：「潛行」（4，1920x1080@60）與「潛行 4K」（5，3840x2160@60），
         /// 各有一條目標為「遊玩」的內建切換條件，放在 <paramref name="extra"/> 的切換條件之後
-        /// （<paramref name="extra"/> 中已經有該潛行模式的 <see cref="BuiltIn"/> 時不另外加）。
+        /// （<paramref name="extra"/> 中已經有該潛行模式的 <see cref="BuiltIn"/>（任何目標）時不另外加）。
         /// </summary>
         public static Harness WithRemote(int current, params string[] extra) =>
-            Modes(current, extra.Concat(new[] { Remote, Remote4K }.Where(id => !extra.Contains(BuiltIn(id, Play))).Select(id => BuiltIn(id, Play))).ToArray(),
+            Modes(current, extra.Concat(new[] { Remote, Remote4K }
+                    .Where(id => !extra.Any(e => e.StartsWith("From=" + id + "\r\n", StringComparison.Ordinal) && e.Contains("BuiltIn=1")))
+                    .Select(id => BuiltIn(id, Play))).ToArray(),
                 RemoteMode(Remote, "潛行", 1920, 1080, 60) + RemoteMode(Remote4K, "潛行 4K", 3840, 2160, 60));
 
         /// <summary>潛行模式的 [Mode.N] 分段。</summary>
@@ -361,7 +368,7 @@ namespace AutoDisplayMode.Core.Tests
 
         /// <summary>內建切換條件（給 <see cref="Modes"/> 的 extra）。</summary>
         public static string BuiltIn(int from, int to) =>
-            Cfg("From=" + from, "Condition=UsageDetected", "MouseKeyboard=1", "Audio=0", "To=" + to, "Forced=1", "BuiltIn=1");
+            Cfg("From=" + from, "Condition=UsageDetected", "MouseKeyboard=1", "Audio=0", Sw.To(to), "Forced=1", "BuiltIn=1");
 
         /// <summary>
         /// 三個模式「遊玩」（1，1920x1080）、「省電」（2，1280x720）、「全關」（3，800x600），各記錄預設螢幕為主螢幕。

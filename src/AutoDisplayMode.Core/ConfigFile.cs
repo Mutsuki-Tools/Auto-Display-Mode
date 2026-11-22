@@ -18,6 +18,8 @@ namespace AutoDisplayMode.Core
         /// <summary>過渡用的舊版切換條件分段（票 03）：讀到時轉換為切換條件，不再寫出。</summary>
         const string LegacySection = "LegacySwitch";
         const string SwitchPrefix = "Switch.";
+        /// <summary>切換條件 To= 的「回到上個配置」。</summary>
+        const string PreviousValue = "Previous";
         const string ModePrefix = "Mode.";
         const string MonitorInfix = ".Monitor.";
 
@@ -79,7 +81,7 @@ namespace AutoDisplayMode.Core
         public static ParseResult Parse(string text)
         {
             var c = new AppConfig();
-            int? currentModeId = null, restoreModeId = null;
+            int? currentModeId = null, restoreModeId = null, previousModeId = null;
             var conditions = new List<(int Number, SwitchCondition Condition, string? ReadError)>();
             LegacySwitch? legacy = null;
             bool obsolete = false;
@@ -88,7 +90,7 @@ namespace AutoDisplayMode.Core
             {
                 if (Is(name, GeneralSection))
                 {
-                    foreach (var (key, val) in values) ReadGeneralKey(c, key, val, ref currentModeId, ref restoreModeId);
+                    foreach (var (key, val) in values) ReadGeneralKey(c, key, val, ref currentModeId, ref restoreModeId, ref previousModeId);
                 }
                 else if (Is(name, LegacySection))
                 {
@@ -127,6 +129,8 @@ namespace AutoDisplayMode.Core
             c.RestoreModeId = restoreModeId is int r && c.FindMode(r) is { IsRemote: false }
                 ? r
                 : (c.CurrentModeConfig is { IsRemote: false } current ? current : c.FirstNormalMode)?.Id ?? 0;
+            // 復原模式之前的一般模式不存在或不是一般模式時當成沒有（「回到上個配置」改用順序第一個一般模式）
+            c.PreviousModeId = previousModeId is int p && c.FindMode(p) is { IsRemote: false } ? p : 0;
             Normalize(c);
 
             var note = new StringBuilder();
@@ -213,7 +217,12 @@ namespace AutoDisplayMode.Core
                 switch (key)
                 {
                     case "from": s = s with { FromModeId = ParseInt(val, 0) }; break;
-                    case "to": s = s with { ToModeId = ParseInt(val, 0) }; break;
+                    case "to":
+                        // 「回到上個配置」寫成 To=Previous；To=-1 不是模式編號，也不當成它
+                        bool previous = string.Equals(val.Trim(), PreviousValue, StringComparison.OrdinalIgnoreCase);
+                        int to = ParseInt(val, 0);
+                        s = s with { ToModeId = previous ? SwitchCondition.PreviousTarget : to == SwitchCondition.PreviousTarget ? 0 : to };
+                        break;
                     case "condition":
                         if (TryParseEnum(val, out SwitchConditionKind kind)) s = s with { Kind = kind };
                         else error = "無法辨識的條件類型「" + val.Trim() + "」（應為 Idle 或 UsageDetected）";
@@ -234,7 +243,7 @@ namespace AutoDisplayMode.Core
             return s.Kind == SwitchConditionKind.UsageDetected ? s with { IdleAmount = new SwitchCondition().IdleAmount, IdleUnit = default } : s;
         }
 
-        static void ReadGeneralKey(AppConfig c, string key, string val, ref int? currentModeId, ref int? restoreModeId)
+        static void ReadGeneralKey(AppConfig c, string key, string val, ref int? currentModeId, ref int? restoreModeId, ref int? previousModeId)
         {
             switch (key)
             {
@@ -244,6 +253,9 @@ namespace AutoDisplayMode.Core
                     break;
                 case "restoremode":
                     if (int.TryParse(val, NumberStyles.Integer, CultureInfo.InvariantCulture, out int restore)) restoreModeId = restore;
+                    break;
+                case "previousmode":
+                    if (int.TryParse(val, NumberStyles.Integer, CultureInfo.InvariantCulture, out int previous)) previousModeId = previous;
                     break;
                 case "mousemovethreshold": c.MouseMoveThreshold = ParseInt(val, c.MouseMoveThreshold); break;
                 case "audiothreshold": c.AudioThreshold = ParseDouble(val, c.AudioThreshold); break;
@@ -403,6 +415,10 @@ namespace AutoDisplayMode.Core
             Line("# 復原模式（填某個一般模式的 N）：最近一次所在的一般模式，由程式自動更新。");
             Line("# 程式啟動時目前模式是潛行模式、虛擬螢幕意外消失時，改套用這個模式；不存在時用順序第一個一般模式");
             Line("RestoreMode=" + Int(c.RestoreModeId));
+            Line("# 復原模式之前所在的一般模式（填某個一般模式的 N，0 = 沒有），由程式自動更新。");
+            Line("# 切換條件的 To=Previous（回到上個配置）切回最近一次所在、而且不是目前模式的一般模式：");
+            Line("# 處於潛行模式時是 RestoreMode，處於一般模式時是這個模式；不存在時用順序第一個一般模式");
+            Line("PreviousMode=" + Int(c.PreviousModeId));
             Line("# 滑鼠要移動超過幾個像素才算使用（1~1000，過濾桌面震動造成的微小位移）");
             Line("MouseMoveThreshold=" + Int(c.MouseMoveThreshold));
             Line("# 聲音峰值超過多少（0~1）才算有聲音");
@@ -427,12 +443,12 @@ namespace AutoDisplayMode.Core
             Line("#   IdleUnit       Minutes（分鐘）或 Hours（小時）（只用於 Idle）");
             Line("#   MouseKeyboard  使用來源「鍵盤滑鼠」（1=選，0=不選）");
             Line("#   Audio          使用來源「聲音」（1=選，0=不選；聲音要持續 AudioSeconds 秒才算使用）");
-            Line("#   To             目標模式（填 [Mode.N] 的 N，不可與來源模式相同）");
+            Line("#   To             目標模式（填 [Mode.N] 的 N，不可與來源模式相同；Previous = 回到上個配置，見 PreviousMode）");
             Line("#   Forced         強制（1=是，0=否；沒寫時為 0）：即使自動切換關閉、設定視窗開著，這條也照樣生效");
             Line("#   BuiltIn        內建切換條件（1=是；只有內建切換條件才寫）");
             Line("# 閒置：所選的使用來源全部都沒有使用，持續 IdleTime。偵測到使用：所選的使用來源任一個出現使用就成立。");
             Line("# 內建切換條件：每個潛行模式剛好一條，From 是該潛行模式，Condition=UsageDetected、MouseKeyboard=1、Audio=0、Forced=1 固定，");
-            Line("#   To 必須是一般模式，只認實體鍵盤滑鼠（不受 IgnoreRemoteInput 影響）。不符時程式讀取時會修正並提示。");
+            Line("#   To 必須是一般模式或 Previous，只認實體鍵盤滑鼠（不受 IgnoreRemoteInput 影響）。不符時程式讀取時會修正並提示。");
             Line("# 例：");
             Line("#   [Switch.1]");
             Line("#   From=1");
@@ -459,7 +475,7 @@ namespace AutoDisplayMode.Core
                 }
                 Line("MouseKeyboard=" + Bool(s.Uses(UsageSources.MouseKeyboard)));
                 Line("Audio=" + Bool(s.Uses(UsageSources.Audio)));
-                Line("To=" + Int(s.ToModeId));
+                Line("To=" + (s.ToPrevious ? PreviousValue : Int(s.ToModeId)));
                 Line("Forced=" + Bool(s.Forced));
                 if (s.BuiltIn) Line("BuiltIn=1");
             }

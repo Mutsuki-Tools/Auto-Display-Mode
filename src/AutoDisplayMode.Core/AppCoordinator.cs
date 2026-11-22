@@ -324,7 +324,7 @@ namespace AutoDisplayMode.Core
             // 套用時目前模式以協調者為準（見 ApplySettings）
             foreach (SwitchCondition s in ConditionsToCheck())
             {
-                ModeConfig? target = config.FindMode(s.ToModeId);
+                ModeConfig? target = config.TargetOf(s);   // 「回到上個配置」在這時才決定實際目標；它就是目前模式時不切換
                 if (target == null || !IsSatisfied(s, now, hookUsage, audioUsage)) continue;
                 string text = s.Kind == SwitchConditionKind.Idle
                     ? s.DescribeCondition() + "，已自動切換到「" + target.Name + "」。"
@@ -751,11 +751,11 @@ namespace AutoDisplayMode.Core
             ContinueExit();
         }
 
-        /// <summary>目前模式改為 <paramref name="mode"/>；一般模式同時成為復原模式（最近一次所在的一般模式）。</summary>
+        /// <summary>目前模式改為 <paramref name="mode"/>；一般模式同時成為復原模式（見 <see cref="AppConfig.RecordNormalMode"/>）。</summary>
         void SetCurrentMode(ModeConfig mode)
         {
             config.CurrentModeId = mode.Id;
-            if (!mode.IsRemote) config.RestoreModeId = mode.Id;
+            if (!mode.IsRemote) config.RecordNormalMode(mode.Id);
         }
 
         // ------------------------------------------------------------
@@ -879,7 +879,7 @@ namespace AutoDisplayMode.Core
         /// <summary>
         /// 套用設定視窗暫存的設定（<see cref="AppConfig.Clone"/> 出來修改的複本）：寫入 cfg 並立即生效。
         /// 成功時回傳 null；失敗時回傳原因，設定維持不變。
-        /// 成功時模式依順序重新編號為 1、2、3…，切換條件、目前模式與復原模式跟著改，<paramref name="edited"/> 也一樣重新編號。
+        /// 成功時模式依順序重新編號為 1、2、3…，切換條件、目前模式、復原模式與復原模式之前的一般模式跟著改，<paramref name="edited"/> 也一樣重新編號。
         /// 內建切換條件的目標模式因刪除模式而改成第一個一般模式時，跳出通知說明。
         /// </summary>
         /// <param name="capturedModeId">
@@ -903,8 +903,12 @@ namespace AutoDisplayMode.Core
             foreach (ModeConfig m in next.Modes) m.Name = m.Name.Trim();
             next.CurrentModeId = current;
             next.AutoSwitch = config.AutoSwitch;
-            int restore = captured ? current : config.RestoreModeId;
-            next.RestoreModeId = next.FindMode(restore) is { IsRemote: false } ? restore : next.FirstNormalMode!.Id;   // 復原模式被刪除時改用第一個一般模式
+            next.RestoreModeId = config.RestoreModeId;
+            next.PreviousModeId = config.PreviousModeId;
+            if (captured) next.RecordNormalMode(current);   // 擷取存入的模式成為復原模式
+            if (next.FindMode(next.RestoreModeId) is not { IsRemote: false }) next.RestoreModeId = next.FirstNormalMode!.Id;   // 被刪除時改用第一個一般模式
+            if (next.FindMode(next.PreviousModeId) is not { IsRemote: false } || next.PreviousModeId == next.RestoreModeId)
+                next.PreviousModeId = 0;   // 被刪除時當成沒有（回到上個配置改用第一個一般模式）
             string retargeted = DescribeRetargetedBuiltIns(next);
             next.RenumberModes();   // cfg 的 [Mode.N] 依模式的順序編號
             if (!Save(next)) return "無法寫入設定檔：\n" + store.Location;
@@ -937,7 +941,7 @@ namespace AutoDisplayMode.Core
             var lines = new List<string>();
             foreach (SwitchCondition s in next.SwitchConditions.Where(s => s.BuiltIn))
             {
-                if (config.BuiltInConditionOf(s.FromModeId) is not SwitchCondition old || old.ToModeId == s.ToModeId) continue;
+                if (s.ToPrevious || config.BuiltInConditionOf(s.FromModeId) is not SwitchCondition old || old.ToModeId == s.ToModeId) continue;
                 if (next.FindMode(old.ToModeId) != null || config.FindMode(old.ToModeId) is not ModeConfig deleted) continue;
                 lines.Add("「" + next.FindMode(s.FromModeId)!.Name + "」的內建切換條件的目標模式「" + deleted.Name + "」已刪除，改成「" +
                           (next.FindMode(s.ToModeId)?.Name ?? "") + "」。");

@@ -45,4 +45,4 @@ build.bat
 
 ## 授權
 
-第三方元件的授權見 [`drivers/sudovda/LICENSE.txt`](drivers/sudovda/LICENSE.txt)。
+本專案以 [MIT License](LICENSE) 授權。內附的 SudoVDA 驅動另有授權聲明，見 [`drivers/sudovda/LICENSE.txt`](drivers/sudovda/LICENSE.txt)。

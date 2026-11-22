@@ -19,6 +19,10 @@ namespace AutoDisplayMode
             int? exitCode = SudoVdaDriverInstaller.TryRunElevatedCommand(args);
             if (exitCode != null) return exitCode.Value;
 
+            // 守護程式（與啟動它的中繼程序）：同樣在拿 mutex 之前處理（主程式正在執行）
+            exitCode = RecoveryGuardian.TryRun(args);
+            if (exitCode != null) return exitCode.Value;
+
             using var mutex = new Mutex(true, "AutoDisplayMode_SingleInstance", out bool createdNew);
             if (!createdNew)
             {
@@ -26,6 +30,9 @@ namespace AutoDisplayMode
                     "Auto Display Mode", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return 0;
             }
+
+            // 上次的主程式意外結束、守護程式還在切回復原模式時，等它完成再讀 cfg（避免同時改螢幕配置與 cfg）
+            RecoveryGuardian.WaitForRunningGuardian();
 
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);

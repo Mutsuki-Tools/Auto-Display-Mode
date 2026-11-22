@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Threading;
 using System.Windows.Forms;
 using AutoDisplayMode.Core;
@@ -15,12 +16,17 @@ namespace AutoDisplayMode
     /// <summary>介面層：工作列圖示與右鍵選單。邏輯都在 <see cref="AppCoordinator"/>。</summary>
     sealed class TrayApp : ApplicationContext
     {
-        const string AppTitle = "Auto Display Mode";
+        internal const string AppTitle = "Auto Display Mode";
+        internal const string ConfigFileName = "AutoDisplayMode.cfg";
+        /// <summary>結束前切回復原模式的時間上限：超過就照樣結束（守護程式會看到主程式結束而接手）。</summary>
+        const long ExitLimitMs = 20_000;
 
         readonly AppCoordinator app;
         readonly WindowsUsageSignals signals;
         readonly WindowsMonitorSystem monitors;
         readonly SudoVdaVirtualDisplay virtualDisplay;
+        readonly GuardianLink? guardian;   // 無法建立共用記憶體時為 null（沒有守護程式）
+        readonly SessionEndWatcher sessionEnd;
         readonly SudoVdaDriverInstaller driver = new(SudoVdaDriverInstaller.DefaultPackageFolder());
         readonly NotifyIcon tray;
         readonly ContextMenuStrip menu;
@@ -34,6 +40,8 @@ namespace AutoDisplayMode
         readonly System.Windows.Forms.Timer timer;
         readonly int swatchSize;   // 選單中顏色方塊的邊長（依 DPI 放大）
         SettingsForm? settings;    // 只允許開一個設定視窗；沒開時為 null
+        Stopwatch? exitWatch;      // 開始結束（切回復原模式）後經過的時間；還沒開始結束時為 null
+        bool exited;               // 已釋放資源、結束訊息迴圈
 
         public TrayApp()
         {
@@ -48,11 +56,21 @@ namespace AutoDisplayMode
             signals = new WindowsUsageSignals(clock);
             monitors = new WindowsMonitorSystem(ui);
             virtualDisplay = new SudoVdaVirtualDisplay(monitors.VirtualDisplayPresent);
+            try
+            {
+                guardian = new GuardianLink();
+            }
+            catch
+            {
+                guardian = null;   // 沒有守護程式：閃退時由驅動的心跳保險與 Windows 接手
+            }
             string dir = Path.GetDirectoryName(Application.ExecutablePath)!;
             app = new AppCoordinator(
-                new FileConfigStore(Path.Combine(dir, "AutoDisplayMode.cfg")),
-                monitors, virtualDisplay, signals, clock, new RegistryStartup(), new BalloonNotifier(tray, AppTitle));
+                new FileConfigStore(Path.Combine(dir, ConfigFileName)),
+                monitors, virtualDisplay, (IRecoveryGuard?)guardian ?? new NoGuard(), signals, clock, new RegistryStartup(),
+                new BalloonNotifier(tray, AppTitle));
             monitors.ApplyFinished += app.OnSwitchFinished;
+            sessionEnd = new SessionEndWatcher(() => app.InRemoteMode, ExitBeforeSessionEnd);
 
             // ---- 右鍵選單 ----
             menu = new ContextMenuStrip();
@@ -95,9 +113,14 @@ namespace AutoDisplayMode
             tray.MouseDoubleClick += (_, e) => { if (e.Button == MouseButtons.Left) ShowSettings(); };
             tray.Visible = true;
             app.Changed += UpdateUi;
+            app.Changed += CheckExit;
 
             timer = new System.Windows.Forms.Timer { Interval = 1000 };
-            timer.Tick += delegate { app.Tick(); };
+            timer.Tick += delegate
+            {
+                app.Tick();
+                CheckExit();
+            };
 
             UpdateUi();
 
@@ -168,6 +191,7 @@ namespace AutoDisplayMode
         // ------------------------------------------------------------
         void UpdateUi()
         {
+            if (exitWatch != null) return;   // 結束中：選單已停用，圖示維持原樣
             AppConfig cfg = app.Config;
             string modeName = app.CurrentModeName;
             string? target = app.SwitchTargetName;
@@ -230,7 +254,8 @@ namespace AutoDisplayMode
                 "・切換條件：處於某個模式時，閒置一段時間或偵測到使用，就切換到另一個模式。勾選「強制」的切換條件即使自動切換關閉、設定視窗開著，也照樣生效。\n" +
                 "・潛行模式：所有螢幕關閉、只開一個虛擬螢幕給遠端連線軟體（例如 Chrome 遠端桌面）使用，電腦照常運作，也省下螢幕的電。" +
                 "回到電腦前動一下實體鍵盤滑鼠，就依它的內建切換條件回到一般模式（遠端操作不算）。「潛行」不是防窺。\n" +
-                "・復原模式：最近一次所在的一般模式。程式啟動時目前模式是潛行模式，或虛擬螢幕意外消失時，會切回復原模式。\n" +
+                "・復原模式：最近一次所在的一般模式。處於潛行模式時關閉程式、關機、登出或重開機，會先切回復原模式；" +
+                "程式閃退、被結束或沒有回應時，由另外執行的守護程式在幾秒內切回。程式啟動時目前模式是潛行模式，或虛擬螢幕意外消失時，也會切回復原模式。\n" +
                 "・目前模式：" + name + (app.InRemoteMode ? "（潛行模式）" : "") + "　自動切換：" + OnOff(cfg.AutoSwitch) + "\n\n" +
                 "【右鍵選單】\n" +
                 "・最上方的「目前：…」顯示目前模式（切換中時顯示正在切換到哪個模式）。\n" +
@@ -240,7 +265,7 @@ namespace AutoDisplayMode
                 "・將目前螢幕狀態存入「" + name + "」…：把目前每台螢幕的狀態存進目前模式，並重新開始計時（設定視窗開著時、處於潛行模式時無法使用）。\n" +
                 "・用記事本開啟 cfg：直接編輯設定檔；存檔後選「重新載入 cfg」即生效（設定視窗開著時無法重新載入）。\n" +
                 "・說明：顯示這段說明。\n" +
-                "・關閉程式：結束常駐。\n\n" +
+                "・關閉程式：結束常駐（處於潛行模式時先切回復原模式）。\n\n" +
                 "【圖示】\n" +
                 "・顏色：目前模式的顏色\n" +
                 "・實心：自動切換開啟　空心：自動切換關閉\n\n" +
@@ -250,19 +275,120 @@ namespace AutoDisplayMode
             MessageBox.Show(help, AppTitle + " - 說明", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
 
+        // ------------------------------------------------------------
+        //  結束（ADR-0006 第 1 層）
+        // ------------------------------------------------------------
+
+        /// <summary>
+        /// 右鍵選單「關閉程式」：處於潛行模式時先切回復原模式（等它完成，最多 <see cref="ExitLimitMs"/>），再釋放資源、結束。
+        /// 切換在背景與每秒的 Tick 中進行，這段期間停用右鍵選單。
+        /// </summary>
         void ExitApp()
         {
+            if (exitWatch != null) return;
             settings?.CloseDiscardingChanges();   // 放棄設定視窗中未套用的修改，不確認
+            exitWatch = Stopwatch.StartNew();
+            app.PrepareExit();
+            if (!app.ReadyToExit)
+            {
+                tray.ContextMenuStrip = null;
+                tray.Text = AppTitle + "\n正在切回復原模式，完成後結束…";
+            }
+            CheckExit();
+        }
+
+        /// <summary>結束中，切回復原模式已完成（或逾時）時，在目前的呼叫結束後釋放資源、結束。</summary>
+        void CheckExit()
+        {
+            if (exitWatch == null || exited) return;
+            if (app.ReadyToExit || exitWatch.ElapsedMilliseconds >= ExitLimitMs)
+                SynchronizationContext.Current?.Post(_ => FinishExit(), null);
+        }
+
+        void FinishExit()
+        {
+            if (exited) return;
+            exited = true;
+            app.Changed -= UpdateUi;
+            app.Changed -= CheckExit;
             timer.Stop();
             signals.Dispose();
             monitors.Dispose();
-            virtualDisplay.Dispose();   // 不再送心跳：處於潛行模式時驅動約 3 秒後移除虛擬螢幕，Windows 再點亮實體螢幕（票 04 改成先切回復原模式）
+            virtualDisplay.Dispose();   // 還有虛擬螢幕時（逾時）不再送心跳：驅動約 3 秒後移除它
+            guardian?.Dispose();        // 還在守護時（逾時），守護程式看到主程式結束就接手
+            sessionEnd.Dispose();
             tray.Visible = false;
             tray.Dispose();
             ExitThread();
         }
 
-        static Color ToColor(int rgb) => Color.FromArgb((rgb >> 16) & 0xFF, (rgb >> 8) & 0xFF, rgb & 0xFF);
+        /// <summary>
+        /// 工作階段即將結束（關機、登出、重開機，收到 WM_ENDSESSION）：處於潛行模式時先切回復原模式。
+        /// 視窗程序返回後 Windows 隨時可能結束本程式，所以在這裡以巢狀訊息迴圈等它完成（套用結束的回呼與每秒的 Tick 都靠訊息迴圈）。
+        /// </summary>
+        void ExitBeforeSessionEnd()
+        {
+            if (exited) return;
+            settings?.CloseDiscardingChanges();
+            exitWatch ??= Stopwatch.StartNew();
+            app.PrepareExit();
+            while (!app.ReadyToExit && !exited && exitWatch.ElapsedMilliseconds < ExitLimitMs)
+            {
+                Application.DoEvents();
+                Thread.Sleep(20);
+            }
+            FinishExit();
+        }
+
+        /// <summary>
+        /// 接收工作階段即將結束的通知：隱藏的頂層視窗（訊息專用視窗收不到廣播）。
+        /// WM_QUERYENDSESSION 時一律同意，處於潛行模式時登記「正在切回復原模式」的原因（Windows 的關機畫面顯示）；
+        /// WM_ENDSESSION（確定結束）時呼叫 <c>onEnding</c>。
+        /// </summary>
+        sealed class SessionEndWatcher : NativeWindow, IDisposable
+        {
+            const int WM_QUERYENDSESSION = 0x0011;
+            const int WM_ENDSESSION = 0x0016;
+
+            readonly Func<bool> inRemoteMode;
+            readonly Action onEnding;
+
+            public SessionEndWatcher(Func<bool> inRemoteMode, Action onEnding)
+            {
+                this.inRemoteMode = inRemoteMode;
+                this.onEnding = onEnding;
+                CreateHandle(new CreateParams());
+            }
+
+            protected override void WndProc(ref Message m)
+            {
+                if (m.Msg == WM_QUERYENDSESSION)
+                {
+                    if (inRemoteMode()) ShutdownBlockReasonCreate(Handle, "正在切回復原模式（開啟實體螢幕）");
+                    m.Result = (IntPtr)1;
+                    return;
+                }
+                if (m.Msg == WM_ENDSESSION)
+                {
+                    IntPtr handle = Handle;   // onEnding 結束程式時會銷毀這個視窗
+                    if (m.WParam != IntPtr.Zero) onEnding();
+                    ShutdownBlockReasonDestroy(handle);
+                    m.Result = IntPtr.Zero;
+                    return;
+                }
+                base.WndProc(ref m);
+            }
+
+            public void Dispose() => DestroyHandle();
+
+            [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+            static extern bool ShutdownBlockReasonCreate(IntPtr hWnd, string reason);
+
+            [DllImport("user32.dll")]
+            static extern bool ShutdownBlockReasonDestroy(IntPtr hWnd);
+        }
+
+        internal static Color ToColor(int rgb) => Color.FromArgb((rgb >> 16) & 0xFF, (rgb >> 8) & 0xFF, rgb & 0xFF);
 
         Icon IconFor(int rgb, bool filled)
         {
@@ -275,7 +401,7 @@ namespace AutoDisplayMode
         }
 
         // 畫一個小螢幕圖示：實心 = 自動切換開，空心 = 自動切換關
-        static Icon MakeIcon(Color color, bool filled)
+        internal static Icon MakeIcon(Color color, bool filled)
         {
             using var bmp = new Bitmap(32, 32);
             using (Graphics g = Graphics.FromImage(bmp))

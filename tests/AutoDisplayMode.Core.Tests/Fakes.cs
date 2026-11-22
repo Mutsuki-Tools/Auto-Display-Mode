@@ -177,6 +177,33 @@ namespace AutoDisplayMode.Core.Tests
         public void Vanish() => Exists = false;
     }
 
+    /// <summary>假的守護程式：記錄啟動、結束與心跳；可模擬守護程式接手的進度。</summary>
+    sealed class FakeGuard : IRecoveryGuard
+    {
+        /// <summary>呼叫紀錄：「守護」「結束守護」（心跳另外計數；沒在守護時的結束不記錄）。</summary>
+        public List<string> Log { get; } = new();
+
+        public bool Armed { get; private set; }
+        public int Beats { get; private set; }
+        public GuardTakeOver TakeOver { get; set; }
+
+        public void Arm()
+        {
+            Armed = true;
+            TakeOver = GuardTakeOver.None;
+            Log.Add("守護");
+        }
+
+        public void Disarm()
+        {
+            if (!Armed) return;
+            Armed = false;
+            Log.Add("結束守護");
+        }
+
+        public void Beat() => Beats++;
+    }
+
     static class Fake
     {
         public static string Text(VideoMode v) => v.Width + "x" + v.Height + "@" + v.RefreshRate;
@@ -262,6 +289,7 @@ namespace AutoDisplayMode.Core.Tests
         public FakeNotifier Notifier { get; } = new();
         public FakeMonitors Monitors { get; }
         public FakeVirtualDisplay Virtual { get; } = new();
+        public FakeGuard Guard { get; } = new();
         public AppCoordinator App { get; }
 
         /// <summary>螢幕系統與虛擬螢幕共用的呼叫紀錄（依呼叫順序）。</summary>
@@ -279,7 +307,7 @@ namespace AutoDisplayMode.Core.Tests
             Virtual.Log = Log;
             virtualDisplay?.Invoke(Virtual);
             Startup.IsEnabled = startupEnabled;
-            App = new AppCoordinator(Store, Monitors, Virtual, Signals, Clock, Startup, Notifier);
+            App = new AppCoordinator(Store, Monitors, Virtual, Guard, Signals, Clock, Startup, Notifier);
             Monitors.TargetName = () => App.SwitchTargetName;
             if (start) App.Start();
         }

@@ -26,9 +26,12 @@ namespace AutoDisplayMode.Core
         /// 移除虛擬螢幕後，等 Windows 依記憶改完配置的時間（票 02 實測約 0.4 秒），之後再重新套用一次螢幕設定。
         /// </summary>
         const long SettleMs = 1_500;
+        /// <summary>守護程式接手後，等它切回復原模式的時間上限（守護程式自己的上限是 60 秒）；超過就由本程式切回。</summary>
+        const long TakeOverWaitMs = 60_000;
         /// <summary>首次啟動時以目前螢幕狀態建立的模式名稱。</summary>
         const string DefaultModeName = "預設";
         const string BusyText = "正在切換中，請稍候。";
+        const string TakeOverBusyText = "守護程式正在切回復原模式，請稍候。";
         const string SettingsOpenText = "設定視窗開啟中，請先關閉設定視窗";
         /// <summary>處於潛行模式時不能擷取的原因（通知與設定視窗共用）。</summary>
         public const string RemoteCaptureText = "處於潛行模式時無法擷取：所有螢幕都關閉了，擷取會把「全部關閉」存進模式。請先切換到一般模式。";
@@ -36,6 +39,7 @@ namespace AutoDisplayMode.Core
         readonly IConfigStore store;
         readonly IMonitorSystem monitors;
         readonly IVirtualDisplay virtualDisplay;
+        readonly IRecoveryGuard guard;
         readonly IUsageSignals signals;
         readonly IClock clock;
         readonly IStartupRegistration startup;
@@ -51,6 +55,10 @@ namespace AutoDisplayMode.Core
         bool writesBlocked;   // cfg 讀取或舊版備份失敗：不寫入 cfg，避免覆蓋原本的內容
         bool captureStale = true; // 設定視窗最後一次擷取之後又切換過螢幕（或還沒擷取過）：擷取的模式不再代表目前的螢幕狀態
         bool virtualAlive;    // 本程式建立了虛擬螢幕、還沒移除：每秒送心跳
+        bool exiting;         // 程式即將結束（PrepareExit）：不再切換，只完成復原
+        bool exitRestoreStarted; // 結束前已經開始切回復原模式（只試一次）
+        long takeOverSinceMs = -1; // 守護程式接手、等它切回復原模式的起點；沒有在等時為 -1
+        bool guardTookOver;   // 守護程式在本程式沒有回應時接手了：一致性檢查切回復原模式時說明原因
         string loadNote = ""; // 載入 cfg 時發生的事（轉移、備份失敗等），附加在下一則通知中
 
         /// <summary>套用螢幕狀態的原因。</summary>
@@ -110,12 +118,13 @@ namespace AutoDisplayMode.Core
         IReadOnlyList<MonitorSettings>? previewBefore;   // 預覽前的螢幕狀態；沒有預覽（或已保留、作廢）時為 null
         bool previewApplied;      // 預覽已套用，等待使用者保留或還原
 
-        public AppCoordinator(IConfigStore store, IMonitorSystem monitors, IVirtualDisplay virtualDisplay, IUsageSignals signals,
-            IClock clock, IStartupRegistration startup, INotifier notifier)
+        public AppCoordinator(IConfigStore store, IMonitorSystem monitors, IVirtualDisplay virtualDisplay, IRecoveryGuard guard,
+            IUsageSignals signals, IClock clock, IStartupRegistration startup, INotifier notifier)
         {
             this.store = store;
             this.monitors = monitors;
             this.virtualDisplay = virtualDisplay;
+            this.guard = guard;
             this.signals = signals;
             this.clock = clock;
             this.startup = startup;
@@ -204,19 +213,7 @@ namespace AutoDisplayMode.Core
             ResetUsageTracking(now);
             SyncStartupIntoLoadNote();
 
-            bool leftover = false;
-            try
-            {
-                if (virtualDisplay.Exists)
-                {
-                    leftover = true;
-                    virtualDisplay.Remove();
-                }
-            }
-            catch
-            {
-                // 移除失敗時驅動約 3 秒後會自己移除（沒有心跳）
-            }
+            bool leftover = RemoveLeftoverVirtualDisplay();
 
             string restoreNote = "";
             if (InRemoteMode)
@@ -229,6 +226,42 @@ namespace AutoDisplayMode.Core
             if (InRemoteMode) SwitchToRestore(null, NotificationKind.Info, settleFirst: leftover);
         }
 
+        /// <summary>移除上次（或主程式）留下的虛擬螢幕；它原本還在時回傳 true。移除失敗時驅動約 3 秒後會自己移除（沒有心跳）。</summary>
+        bool RemoveLeftoverVirtualDisplay()
+        {
+            bool leftover = false;
+            try
+            {
+                if (virtualDisplay.Exists)
+                {
+                    leftover = true;
+                    virtualDisplay.Remove();
+                }
+            }
+            catch
+            {
+                // 驅動會自己移除
+            }
+            return leftover;
+        }
+
+        /// <summary>
+        /// 守護程式呼叫（取代 <see cref="Start"/>）：主程式意外結束（<paramref name="hung"/> 為 false）或沒有回應。
+        /// 移除虛擬螢幕（若還在）、等 Windows 依記憶改完配置、套用復原模式並更新 cfg 的目前模式。
+        /// 不論 cfg 的目前模式是什麼都套用（主程式可能在進入潛行模式途中閃退，螢幕已經關了）。
+        /// 完成（或失敗）後 <see cref="ReadyToExit"/> 變成 true；在那之前要每秒呼叫 <see cref="Tick"/>。
+        /// </summary>
+        public void TakeOver(bool hung)
+        {
+            exiting = true;
+            exitRestoreStarted = true;
+            ResetUsageTracking(clock.NowMs);
+            ApplyHookPolicy();
+            RemoveLeftoverVirtualDisplay();
+            SwitchToRestore((hung ? "Auto Display Mode 沒有回應" : "Auto Display Mode 意外結束") + "，守護程式已切回復原模式「{0}」。",
+                NotificationKind.Warning, settleFirst: true);
+        }
+
         /// <summary>
         /// 每秒呼叫一次：虛擬螢幕存在時送心跳；更新使用跡象；確認潛行模式與虛擬螢幕一致；
         /// 再依表格順序檢查來源模式等於目前模式的切換條件，第一條成立的就切換。
@@ -237,11 +270,19 @@ namespace AutoDisplayMode.Core
         {
             long now = clock.NowMs;
 
-            // 心跳：從建立一直送到移除為止（包括切換期間）。套用螢幕設定在背景執行緒，這裡不會被它卡住
+            if (virtualAlive && guard.TakeOver != GuardTakeOver.None)
+            {
+                // 本程式卡住時守護程式接手了，會移除虛擬螢幕：不再送心跳。等它切回復原模式後，由下方的一致性檢查再切回一次
+                MarkVirtualGone();
+                takeOverSinceMs = now;
+            }
+
+            // 心跳（虛擬螢幕與守護程式）：從建立一直送到移除為止（包括切換期間）。套用螢幕設定在背景執行緒，這裡不會被它卡住
             if (virtualAlive)
             {
                 try { virtualDisplay.Ping(); }
                 catch { /* 虛擬螢幕不見了由下方的一致性檢查處理 */ }
+                guard.Beat();
             }
 
             // 聲音：峰值超過門檻且連續超過 AudioSeconds 秒才算一次使用（過濾通知音這類短暫聲音）
@@ -268,7 +309,15 @@ namespace AutoDisplayMode.Core
                 if (now >= settling.SettleAtMs) ReapplyAfterSettle(settling);
                 return;
             }
-            if (IsSwitching || now < ignoreUntilMs) return;
+            if (takeOverSinceMs >= 0)
+            {
+                // 守護程式還在切回復原模式：不和它同時改配置與 cfg
+                if (guard.TakeOver == GuardTakeOver.InProgress && now - takeOverSinceMs < TakeOverWaitMs) return;
+                takeOverSinceMs = -1;
+                guardTookOver = true;
+                ContinueExit();
+            }
+            if (exiting || IsSwitching || now < ignoreUntilMs) return;
             if (KeepRemoteModeConsistent()) return;
 
             // 自動切換關閉或設定視窗開著時只檢查有勾強制的切換條件。設定視窗開著時切換不影響編輯中的副本：
@@ -310,7 +359,7 @@ namespace AutoDisplayMode.Core
         /// </summary>
         void ApplyHookPolicy()
         {
-            bool need = !IsSwitching && ConditionsToCheck().Any(s =>
+            bool need = !exiting && !IsSwitching && ConditionsToCheck().Any(s =>
                 s.Kind == SwitchConditionKind.UsageDetected && s.Uses(UsageSources.MouseKeyboard));
             signals.ApplyHookPolicy(new InputHookPolicy(need, ignoreUntilMs, config.MouseMoveThreshold));
         }
@@ -334,12 +383,15 @@ namespace AutoDisplayMode.Core
                     return false;   // 查詢失敗不等於不存在：下一秒再查
                 }
                 if (exists) return false;
-                bool lost = virtualAlive;
-                virtualAlive = false;   // 已經不在了：不再送心跳，也不必移除
-                SwitchToRestore(lost
+                bool lost = virtualAlive || guardTookOver;
+                MarkVirtualGone();   // 已經不在了：不再送心跳，也不必移除
+                SwitchToRestore(guardTookOver
+                        ? "Auto Display Mode 有一段時間沒有回應，守護程式已切回復原模式「{0}」。"
+                        : lost
                         ? "虛擬螢幕意外消失（例如顯示卡驅動重置），已切回復原模式「{0}」。"
                         : "目前模式是潛行模式，但沒有虛擬螢幕，已切回復原模式「{0}」。",
                     NotificationKind.Warning, settleFirst: lost);
+                guardTookOver = false;
                 return true;
             }
             if (!virtualAlive) return false;
@@ -349,15 +401,55 @@ namespace AutoDisplayMode.Core
         }
 
         // ------------------------------------------------------------
+        //  結束（ADR-0006 第 1 層）
+        // ------------------------------------------------------------
+
+        /// <summary>
+        /// 程式即將結束（右鍵選單「關閉程式」、關機、登出、重開機）時呼叫：不再自動或手動切換；
+        /// 處於潛行模式（或還留著虛擬螢幕）時開始切回復原模式，切換中時等它結束再判斷。
+        /// <see cref="ReadyToExit"/> 變成 true（並觸發 <see cref="Changed"/>）後就可以結束；在那之前仍要每秒呼叫 <see cref="Tick"/>。
+        /// </summary>
+        public void PrepareExit()
+        {
+            if (exiting) return;
+            exiting = true;
+            ApplyHookPolicy();
+            ContinueExit();
+        }
+
+        /// <summary>
+        /// 已呼叫 <see cref="PrepareExit"/>，而且切回復原模式已結束（成功或失敗）、虛擬螢幕已移除、沒有在等守護程式切回復原模式：可以結束程式。
+        /// </summary>
+        public bool ReadyToExit => exiting && !IsSwitching && !virtualAlive && takeOverSinceMs < 0;
+
+        /// <summary>
+        /// 結束的下一步（<see cref="PrepareExit"/> 時與每次切換結束時）：需要時切回復原模式（只試一次），之後移除虛擬螢幕、結束守護程式。
+        /// 切回復原模式失敗時照樣結束：驅動的心跳保險與 Windows 會點亮實體螢幕。
+        /// </summary>
+        void ContinueExit()
+        {
+            if (!exiting || IsSwitching || takeOverSinceMs >= 0) return;
+            if (!exitRestoreStarted && (InRemoteMode || virtualAlive))
+            {
+                exitRestoreStarted = true;
+                SwitchToRestore(null, NotificationKind.Info, settleFirst: false);
+                if (IsSwitching) return;
+            }
+            RemoveVirtualDisplay();
+            OnChanged();
+        }
+
+        // ------------------------------------------------------------
         //  切換模式
         // ------------------------------------------------------------
 
         /// <summary>手動切換到模式 <paramref name="modeId"/>（可以是目前模式：重新套用）。</summary>
         public void ManualSwitch(int modeId)
         {
-            if (IsSwitching)
+            if (exiting) return;
+            if (IsSwitching || takeOverSinceMs >= 0)
             {
-                notifier.Notify(BusyText, NotificationKind.Info);
+                notifier.Notify(IsSwitching ? BusyText : TakeOverBusyText, NotificationKind.Info);
                 return;
             }
             ModeConfig? mode = config.FindMode(modeId);
@@ -429,6 +521,7 @@ namespace AutoDisplayMode.Core
                     return;
                 }
                 virtualAlive = true;
+                guard.Arm();
             }
 
             List<MonitorSettings> allOff = detected.Select(d => ApplyPlanner.Unlisted(d, UnlistedMonitors.Off)).ToList();
@@ -526,11 +619,11 @@ namespace AutoDisplayMode.Core
             OnChanged();
         }
 
-        /// <summary>移除虛擬螢幕並停止心跳。移除失敗時也停止心跳：驅動約 3 秒後會自己移除。</summary>
+        /// <summary>移除虛擬螢幕、停止心跳並結束守護程式。移除失敗時也一樣：驅動約 3 秒後會自己移除。</summary>
         void RemoveVirtualDisplay()
         {
             if (!virtualAlive) return;
-            virtualAlive = false;
+            MarkVirtualGone();
             try
             {
                 virtualDisplay.Remove();
@@ -539,6 +632,13 @@ namespace AutoDisplayMode.Core
             {
                 // 沒有心跳，驅動會自己移除
             }
+        }
+
+        /// <summary>虛擬螢幕已經（或即將）不在：不再送心跳，結束守護程式。</summary>
+        void MarkVirtualGone()
+        {
+            virtualAlive = false;
+            guard.Disarm();
         }
 
         /// <summary>
@@ -648,6 +748,7 @@ namespace AutoDisplayMode.Core
             OnChanged();
             MonitorsChanged?.Invoke();
             if (done.Kind == SwitchKind.Preview && previewApplied) PreviewApplied?.Invoke();
+            ContinueExit();
         }
 
         /// <summary>目前模式改為 <paramref name="mode"/>；一般模式同時成為復原模式（最近一次所在的一般模式）。</summary>

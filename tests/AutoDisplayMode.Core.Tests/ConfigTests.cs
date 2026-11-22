@@ -260,7 +260,7 @@ namespace AutoDisplayMode.Core.Tests
             var store = new FakeStore();
             var clock = new FakeClock();
             var notifier = new FakeNotifier();
-            var app = new AppCoordinator(store, new FakeMonitors { Fail = true }, new FakeVirtualDisplay(), new FakeSignals(clock),
+            var app = new AppCoordinator(store, new FakeMonitors { Fail = true }, new FakeVirtualDisplay(), new FakeGuard(), new FakeSignals(clock),
                 clock, new FakeStartup(), notifier);
             app.Start();
 
@@ -273,7 +273,7 @@ namespace AutoDisplayMode.Core.Tests
         {
             var store = new FakeStore(Harness.Cfg("[General]", "MouseMoveThreshold=30")) { FailReads = true };
             var clock = new FakeClock();
-            var app = new AppCoordinator(store, new FakeMonitors(Harness.DefaultMonitor), new FakeVirtualDisplay(), new FakeSignals(clock),
+            var app = new AppCoordinator(store, new FakeMonitors(Harness.DefaultMonitor), new FakeVirtualDisplay(), new FakeGuard(), new FakeSignals(clock),
                 clock, new FakeStartup(), new FakeNotifier());
 
             app.SetAutoSwitch(false);
@@ -415,7 +415,7 @@ namespace AutoDisplayMode.Core.Tests
             var store = new FakeStore(Legacy) { FailBackup = true };
             var clock = new FakeClock();
             var notifier = new FakeNotifier();
-            var app = new AppCoordinator(store, new FakeMonitors(Harness.DefaultMonitor), new FakeVirtualDisplay(), new FakeSignals(clock),
+            var app = new AppCoordinator(store, new FakeMonitors(Harness.DefaultMonitor), new FakeVirtualDisplay(), new FakeGuard(), new FakeSignals(clock),
                 clock, new FakeStartup(), notifier);
             app.Start();
             app.SetAutoSwitch(true);
@@ -551,7 +551,7 @@ namespace AutoDisplayMode.Core.Tests
             var store = new FakeStore(Harness.Cfg("[General]", "StartWithWindows=1")) { FailReads = true };
             var clock = new FakeClock();
             var startup = new FakeStartup { IsEnabled = true };
-            var app = new AppCoordinator(store, new FakeMonitors(Harness.DefaultMonitor), new FakeVirtualDisplay(), new FakeSignals(clock),
+            var app = new AppCoordinator(store, new FakeMonitors(Harness.DefaultMonitor), new FakeVirtualDisplay(), new FakeGuard(), new FakeSignals(clock),
                 clock, startup, new FakeNotifier());
 
             app.Start();

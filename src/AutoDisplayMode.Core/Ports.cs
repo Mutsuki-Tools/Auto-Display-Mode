@@ -64,6 +64,40 @@ namespace AutoDisplayMode.Core
     }
 
     /// <summary>
+    /// 守護程式（ADR-0006 第 2 層）：處於潛行模式時另外執行的程式，監看本程式的存活與心跳；
+    /// 本程式不是正常結束或心跳逾時，就由它切回復原模式。所有方法都在 UI 執行緒呼叫。
+    /// </summary>
+    public interface IRecoveryGuard
+    {
+        /// <summary>建立虛擬螢幕後呼叫：啟動守護程式（已經在守護時沿用），並送出第一次心跳。</summary>
+        void Arm();
+
+        /// <summary>虛擬螢幕已移除（或已經不在）時呼叫：通知守護程式結束，不再套用。沒有在守護時不動作。</summary>
+        void Disarm();
+
+        /// <summary>
+        /// 心跳：守護時協調者每秒從 UI 執行緒呼叫一次。開關螢幕時 UI 執行緒可能卡住數秒，守護程式判斷逾時要容許這段時間。
+        /// </summary>
+        void Beat();
+
+        /// <summary>守護程式判斷本程式沒有回應而接手的進度。<see cref="Arm"/> 時清除；<see cref="Disarm"/> 之後仍讀得到。</summary>
+        GuardTakeOver TakeOver { get; }
+    }
+
+    /// <summary>守護程式接手（切回復原模式）的進度。</summary>
+    public enum GuardTakeOver
+    {
+        /// <summary>沒有接手。</summary>
+        None,
+
+        /// <summary>正在切回復原模式。</summary>
+        InProgress,
+
+        /// <summary>已經切回復原模式（或放棄），守護程式即將結束。</summary>
+        Done,
+    }
+
+    /// <summary>
     /// 自上次讀取以來，鍵盤滑鼠鉤子偵測到的使用（已經過滑鼠移動門檻）。
     /// </summary>
     /// <param name="Any">任何鍵盤滑鼠使用，包括遠端連線軟體送出（注入）的輸入。</param>
